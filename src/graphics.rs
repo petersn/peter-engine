@@ -5,6 +5,8 @@ use nalgebra::{Matrix4, Point3, UnitQuaternion, Vector3};
 use wgpu::util::DeviceExt;
 use wgpu::BufferSlice;
 
+const DATA_TEXTURE_SIZE: usize = 1024;
+
 pub struct Transform {
   pub translation: Vector3<f32>,
   pub rotation:    UnitQuaternion<f32>,
@@ -161,13 +163,13 @@ impl Projection {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Vertex {
   pub position: [f32; 3],
-  pub color:    [f32; 3],
+  pub color:    [f32; 4],
   pub uv:       [f32; 2],
 }
 
 impl Vertex {
   const ATTRIBS: [wgpu::VertexAttribute; 3] =
-    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2];
+    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x4, 2 => Float32x2];
 
   pub fn desc() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
@@ -177,44 +179,6 @@ impl Vertex {
     }
   }
 }
-
-#[repr(C, align(16))]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct VoxelInstance {
-  pub voxel_position: [f32; 3],
-  pub voxel_tint:     [f32; 3],
-}
-
-impl VoxelInstance {
-  const ATTRIBS: [wgpu::VertexAttribute; 2] =
-    wgpu::vertex_attr_array![3 => Float32x3, 4 => Float32x3];
-
-  pub fn desc() -> wgpu::VertexBufferLayout<'static> {
-    wgpu::VertexBufferLayout {
-      array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
-      step_mode:    wgpu::VertexStepMode::Instance,
-      attributes:   &Self::ATTRIBS,
-    }
-  }
-}
-
-// #[repr(C, align(16))]
-// #[derive(Debug, Clone, Copy, Default)]
-// pub struct RayPathVertex {
-//   pub pos: [f32; 3],
-// }
-
-// impl RayPathVertex {
-//   const ATTRIBS: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![0 => Float32x3];
-
-//   pub fn desc() -> wgpu::VertexBufferLayout<'static> {
-//     wgpu::VertexBufferLayout {
-//       array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
-//       step_mode:    wgpu::VertexStepMode::Instance,
-//       attributes:   &Self::ATTRIBS,
-//     }
-//   }
-// }
 
 #[repr(C, align(16))]
 #[derive(Debug, Clone)]
@@ -556,7 +520,7 @@ impl<V> GeometryBuffer<V> {
 }
 
 impl GeometryBuffer<Vertex> {
-  pub fn add_line(&mut self, a: Point3<f32>, b: Point3<f32>, color: [f32; 3]) {
+  pub fn add_line(&mut self, a: Point3<f32>, b: Point3<f32>, color: [f32; 4]) {
     let index = self.vertex_buffer.len() as u32;
     self.vertex_buffer.push(Vertex {
       position: [a.x, a.y, a.z],
@@ -609,24 +573,12 @@ impl GpuDataTextureBuffer {
 static SHADER_SOURCE: &str = include_str!("shaders.wgsl");
 
 pub struct RenderData {
-  pub main_uniforms:      UniformsBuffer,
-  pub triangles_geo:      GeometryBuffer,
-  pub lines_geo:          GeometryBuffer,
-  pub rays_geo:           GeometryBuffer,
-  //pub paths_geo:          GeometryBuffer<RayPathVertex>,
-  pub voxel_template:     GeometryBuffer,
-  pub voxel_instances:    ResizingBuffer<VoxelInstance>,
-  pub shadow_voxel_instances: ResizingBuffer<VoxelInstance>,
-  pub voxel_data:         GpuDataTextureBuffer,
-  pub voxel_data_texture: wgpu::Texture,
-  pub voxel_data_texture_view:    wgpu::TextureView,
-  pub data_texture_bind_group:    wgpu::BindGroup,
-  pub triangles_pipeline: wgpu::RenderPipeline,
-  pub lines_pipeline:     wgpu::RenderPipeline,
-  //pub ray_paths_pipeline: wgpu::RenderPipeline,
-  pub voxels_pipeline:    wgpu::RenderPipeline,
-  pub shadow_voxels_pipeline: wgpu::RenderPipeline,
-  pub full_screen_pipeline: wgpu::RenderPipeline,
+  pub main_uniforms:           UniformsBuffer,
+  pub main_data:               GpuDataTextureBuffer,
+  pub main_data_texture:       wgpu::Texture,
+  pub main_data_texture_view:  wgpu::TextureView,
+  pub data_texture_bind_group: wgpu::BindGroup,
+  pub pixel_perfect_size:      (u32, u32),
 }
 
 impl RenderData {
@@ -635,44 +587,7 @@ impl RenderData {
     let device = &wgpu_render_state.device;
     let queue = &wgpu_render_state.queue;
 
-    let mut voxel_template = GeometryBuffer::new("voxel-template");
-    // We push all six faces separately.
-    let mut push_face =
-      |a: (i32, i32, i32), b: (i32, i32, i32), c: (i32, i32, i32), d: (i32, i32, i32)| {
-        let base_index = voxel_template.vertex_buffer.len() as u32;
-        voxel_template.vertex_buffer.push(Vertex {
-          position: [a.0 as f32, a.1 as f32, a.2 as f32],
-          color:    [1.0, 1.0, 1.0],
-          uv:       [0.0, 0.0],
-        });
-        voxel_template.vertex_buffer.push(Vertex {
-          position: [b.0 as f32, b.1 as f32, b.2 as f32],
-          color:    [1.0, 1.0, 1.0],
-          uv:       [1.0, 0.0],
-        });
-        voxel_template.vertex_buffer.push(Vertex {
-          position: [c.0 as f32, c.1 as f32, c.2 as f32],
-          color:    [1.0, 1.0, 1.0],
-          uv:       [0.0, 1.0],
-        });
-        voxel_template.vertex_buffer.push(Vertex {
-          position: [d.0 as f32, d.1 as f32, d.2 as f32],
-          color:    [1.0, 1.0, 1.0],
-          uv:       [1.0, 1.0],
-        });
-        for i in [0, 1, 2, 2, 1, 3] {
-          voxel_template.index_buffer.push(base_index + i);
-        }
-      };
-    push_face((0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 1, 0)); // front
-    push_face((0, 0, 1), (1, 0, 1), (0, 1, 1), (1, 1, 1)); // back
-    push_face((0, 0, 0), (1, 0, 0), (0, 0, 1), (1, 0, 1)); // top
-    push_face((0, 1, 0), (1, 1, 0), (0, 1, 1), (1, 1, 1)); // bottom
-    push_face((0, 0, 0), (0, 1, 0), (0, 0, 1), (0, 1, 1)); // left
-    push_face((1, 0, 0), (1, 1, 0), (1, 0, 1), (1, 1, 1)); // right
-    voxel_template.update(device, queue);
-
-    let voxel_data_texture = device.create_texture(&wgpu::TextureDescriptor {
+    let main_data_texture = device.create_texture(&wgpu::TextureDescriptor {
       size:            wgpu::Extent3d {
         width:                 DATA_TEXTURE_SIZE as u32,
         height:                DATA_TEXTURE_SIZE as u32,
@@ -683,10 +598,10 @@ impl RenderData {
       dimension:       wgpu::TextureDimension::D2,
       format:          wgpu::TextureFormat::R32Uint,
       usage:           wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-      label:           Some("voxel_data_texture"),
+      label:           Some("main_data_texture"),
       view_formats:    &[], // FIXME
     });
-    let voxel_data_texture_view = voxel_data_texture.create_view(&wgpu::TextureViewDescriptor {
+    let main_data_texture_view = main_data_texture.create_view(&wgpu::TextureViewDescriptor {
       format: Some(wgpu::TextureFormat::R32Uint),
       ..Default::default()
     });
@@ -708,7 +623,7 @@ impl RenderData {
       layout:  &data_texture_bind_group_layout,
       entries: &[wgpu::BindGroupEntry {
         binding:  0,
-        resource: wgpu::BindingResource::TextureView(&voxel_data_texture_view),
+        resource: wgpu::BindingResource::TextureView(&main_data_texture_view),
       }],
       label:   Some("data_texture_bind_group"),
     });
@@ -718,7 +633,7 @@ impl RenderData {
       source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(SHADER_SOURCE)),
     });
 
-    let main_uniforms = UniformsBuffer::new("main-uniforms", device);
+    let main_uniforms = UniformsBuffer::new("main_uniforms", device);
 
     let default_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
       label:                None,
@@ -794,95 +709,24 @@ impl RenderData {
       }};
     }
 
-    let triangles_pipeline = make_pipeline!(
-      layout = default_pipeline_layout;
-      vertex_buffers = [Vertex::desc()];
-      vertex = "vertex_shader_main";
-      fragment = "solid_fragment_shader_main";
-      topology = wgpu::PrimitiveTopology::TriangleList;
-      blend_mode = no_blending;
-    );
-    let lines_pipeline = make_pipeline!(
-      layout = default_pipeline_layout;
-      vertex_buffers = [Vertex::desc()];
-      vertex = "vertex_shader_main";
-      fragment = "solid_fragment_shader_main";
-      topology = wgpu::PrimitiveTopology::LineList;
-      blend_mode = no_blending;
-    );
-    // let ray_paths_pipeline = make_pipeline!(
-    //   layout = default_pipeline_layout;
-    //   vertex_buffers = [RayPathVertex::desc()];
-    //   vertex = "ray_paths_vertex_shader_main";
-    //   fragment = "solid_fragment_shader_main";
-    //   topology = wgpu::PrimitiveTopology::LineList;
-    // );
-    let voxels_pipeline = make_pipeline!(
-      layout = default_pipeline_layout;
-      vertex_buffers = [Vertex::desc(), VoxelInstance::desc()];
-      vertex = "voxel_vertex_shader_main";
-      fragment = "edge_highlight_fragment_shader_main";
-      topology = wgpu::PrimitiveTopology::TriangleList;
-      blend_mode = no_blending;
-    );
-    let shadow_voxels_pipeline = make_pipeline!(
-      layout = default_pipeline_layout;
-      vertex_buffers = [Vertex::desc(), VoxelInstance::desc()];
-      vertex = "voxel_vertex_shader_main";
-      fragment = "shadow_edge_highlight_fragment_shader_main";
-      topology = wgpu::PrimitiveTopology::TriangleList;
-      blend_mode = alpha_blending;
-      depth_compare = true;
-      depth_write = false;
-    );
-    let full_screen_pipeline = make_pipeline!(
-      layout = data_texture_pipeline_layout;
-      vertex_buffers = [];
-      vertex = "full_screen_vertex_shader_main";
-      fragment = "full_screen_fragment_shader_main";
-      topology = wgpu::PrimitiveTopology::TriangleStrip;
-      blend_mode = no_blending;
-    );
-
-    let mut rays_geo = GeometryBuffer::new("rays-geo");
-    rays_geo.update(device, queue);
-
     Self {
       main_uniforms,
-      triangles_geo: GeometryBuffer::new("triangles-geo"),
-      lines_geo: GeometryBuffer::new("lines-geo"),
-      rays_geo,
-      //paths_geo: GeometryBuffer::new("paths-geo"),
-      voxel_template,
-      voxel_instances: ResizingBuffer::new(
-        "voxel-instances".to_string(),
-        wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-      ),
-      shadow_voxel_instances: ResizingBuffer::new(
-        "shadow-voxel-instances".to_string(),
-        wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-      ),
-      voxel_data: GpuDataTextureBuffer::new(),
-      voxel_data_texture,
-      voxel_data_texture_view,
+      main_data: GpuDataTextureBuffer::new(),
+      main_data_texture,
+      main_data_texture_view,
       data_texture_bind_group,
-      triangles_pipeline,
-      lines_pipeline,
-      //ray_paths_pipeline,
-      voxels_pipeline,
-      shadow_voxels_pipeline,
-      full_screen_pipeline,
+      pixel_perfect_size: (1, 1),
     }
   }
 
   pub fn flush_data_texture(&self, queue: &wgpu::Queue) {
-    let (row_count, bytes) = self.voxel_data.get_write_info();
+    let (row_count, bytes) = self.main_data.get_write_info();
     if row_count == 0 {
       return;
     }
     queue.write_texture(
       wgpu::ImageCopyTexture {
-        texture:   &self.voxel_data_texture,
+        texture:   &self.main_data_texture,
         mip_level: 0,
         origin:    wgpu::Origin3d::ZERO,
         aspect:    wgpu::TextureAspect::All,
@@ -958,15 +802,6 @@ impl WebHandle {
     self.runner.destroy();
   }
 
-  // /// Example on how to call into your app from JavaScript.
-  // #[wasm_bindgen]
-  // pub fn example(&self) {
-  //     if let Some(app) = self.runner.app_mut::<EframeApp>() {
-  //         app.example();
-  //     }
-  // }
-
-  /// The JavaScript can check whether or not your app has crashed:
   #[wasm_bindgen]
   pub fn has_panicked(&self) -> bool {
     self.runner.has_panicked()
@@ -980,83 +815,5 @@ impl WebHandle {
   #[wasm_bindgen]
   pub fn panic_callstack(&self) -> Option<String> {
     self.runner.panic_summary().map(|s| s.callstack())
-  }
-}
-
-// ==================== eframe app ====================
-
-pub struct ReactorSimulatorApp {
-  locked_state: Arc<Mutex<GameState>>,
-}
-
-impl ReactorSimulatorApp {
-  pub fn new(cc: &eframe::CreationContext) -> Self {
-    let limits = cc.wgpu_render_state.as_ref().unwrap().adapter.limits();
-    //log(&format!("Limits: {:#?}", limits));
-    println!("Limits: {:#?}", limits);
-    let locked_state = Arc::new(Mutex::new(GameState::new()));
-    let wgpu_render_state = cc.wgpu_render_state.as_ref().unwrap();
-    let mut w = wgpu_render_state.renderer.write();
-    w.paint_callback_resources.insert(RenderData::new(cc));
-    Self { locked_state }
-  }
-}
-
-impl eframe::App for ReactorSimulatorApp {
-  fn update(&mut self, egui_ctx: &egui::Context, frame: &mut eframe::Frame) {
-    egui_ctx.set_visuals(egui::Visuals::dark());
-    let dt = egui_ctx.input(|inp| inp.stable_dt.clamp(0.0, 0.15));
-
-    // Draw all of the mundate GUI elements, and update
-    {
-      let mut guard = self.locked_state.lock().unwrap();
-      guard.update(dt);
-      guard.draw_main_gui(egui_ctx, frame);
-    }
-
-    // Perform custom painting into an allocated rect.
-    let locked_state_prepare = Arc::clone(&self.locked_state);
-    let locked_state_paint = Arc::clone(&self.locked_state);
-    egui::CentralPanel::default()
-      //.frame(egui::Frame::none().fill(egui::Color32::from_rgb(80, 80, 250)))
-      .frame(egui::Frame::none().fill(egui::Color32::from_rgb(10, 10, 10)))
-      .show(egui_ctx, |ui| {
-        let (id, allocated_rect) = ui.allocate_space(ui.available_size());
-        let response = ui.interact(allocated_rect, id, egui::Sense::click_and_drag());
-        {
-          let mut guard = locked_state_paint.lock().unwrap();
-          guard.response(egui_ctx, allocated_rect, response);
-        }
-
-        let cb = egui_wgpu::CallbackFn::new()
-          .prepare(move |device, queue, _encoder, paint_callback_resources| {
-            let render_data: &mut RenderData = paint_callback_resources.get_mut().unwrap();
-            let mut guard = locked_state_prepare.lock().unwrap();
-            // To avoid some divide by zeros and wgpu errors we clamp the size here.
-            let mut rect_with_min_size = allocated_rect;
-            if rect_with_min_size.width() < 2.0 {
-              rect_with_min_size.set_width(2.0);
-            }
-            if rect_with_min_size.height() < 2.0 {
-              rect_with_min_size.set_height(2.0);
-            }
-            guard.camera.screen_size =
-              (rect_with_min_size.width() as u32, rect_with_min_size.height() as u32);
-            guard.prepare(render_data, device, queue);
-            Vec::new()
-          })
-          .paint(move |_info, render_pass, paint_callback_resources| {
-            let guard = locked_state_paint.lock().unwrap();
-            let render_data: &RenderData = paint_callback_resources.get().unwrap();
-            guard.paint(render_data, render_pass);
-          });
-        ui.painter().add(egui::PaintCallback {
-          rect:     allocated_rect,
-          callback: Arc::new(cb),
-        });
-      });
-
-    // Rerender every frame (suppress the default eframe laziness).
-    egui_ctx.request_repaint();
   }
 }
