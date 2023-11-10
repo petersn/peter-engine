@@ -1,7 +1,12 @@
+// Re-export our main dependencies.
+pub use eframe;
+pub use eframe::{wgpu, egui};
+pub use nalgebra;
+
 use std::sync::{Arc, Mutex};
 
 use graphics::RenderData;
-use eframe::{egui, egui_wgpu::{CallbackTrait, CallbackResources, Callback}};
+use eframe::egui_wgpu::{CallbackTrait, CallbackResources, Callback};
 
 pub mod graphics;
 

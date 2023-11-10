@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::sync::Mutex;
 
 use nalgebra::{Matrix4, Point3, UnitQuaternion, Vector3};
 use wgpu::util::DeviceExt;
