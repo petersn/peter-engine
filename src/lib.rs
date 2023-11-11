@@ -39,6 +39,7 @@ pub trait PeterEngineApp: Send + 'static {
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     encoder: &mut wgpu::CommandEncoder,
+    screen_size: (u32, u32),
   ) -> Vec<wgpu::CommandBuffer>;
   fn paint<'rp>(
     &mut self,
@@ -82,7 +83,7 @@ impl<GameState: PeterEngineApp> CallbackTrait for PaintCallback<GameState> {
     let (render_data, resources) =
       callback_resources.get_mut::<(RenderData, GameState::RenderResources)>().unwrap();
     render_data.pixel_perfect_size = self.pixel_perfect_size;
-    self.locked_state.lock().unwrap().prepare(render_data, resources, device, queue, encoder)
+    self.locked_state.lock().unwrap().prepare(render_data, resources, device, queue, encoder, self.pixel_perfect_size)
   }
 
   fn paint<'rp>(
