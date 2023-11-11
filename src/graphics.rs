@@ -1,8 +1,13 @@
 use std::sync::Arc;
 
+use anymap::AnyMap;
+use enum_map::{EnumArray, EnumMap};
 use nalgebra::{Matrix4, Point3, UnitQuaternion, Vector3};
 use wgpu::util::DeviceExt;
 use wgpu::BufferSlice;
+
+use crate::mipmapping::MipMapGen;
+use crate::PeterEngineApp;
 
 const DATA_TEXTURE_SIZE: usize = 1024;
 
@@ -220,9 +225,9 @@ pub struct ResizingBuffer<T> {
 }
 
 impl<T> ResizingBuffer<T> {
-  pub fn new(label: String, usage: wgpu::BufferUsages) -> Self {
+  pub fn new(label: &str, usage: wgpu::BufferUsages) -> Self {
     Self {
-      label,
+      label: label.to_string(),
       usage,
       buffer_and_len: None,
       contents: Vec::new(),
@@ -498,11 +503,11 @@ impl<V> GeometryBuffer<V> {
   pub fn new(name: &str) -> Self {
     Self {
       vertex_buffer: ResizingBuffer::new(
-        name.to_string(),
+        name,
         wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
       ),
       index_buffer:  ResizingBuffer::new(
-        name.to_string(),
+        name,
         wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
       ),
     }
@@ -538,7 +543,7 @@ impl GeometryBuffer<Vertex> {
 
 pub struct GpuDataTextureBuffer {
   pub data: Vec<u32>,
-  pub ptr: usize,
+  pub ptr:  usize,
 }
 
 impl GpuDataTextureBuffer {
@@ -569,81 +574,121 @@ impl GpuDataTextureBuffer {
   }
 }
 
-static SHADER_SOURCE: &str = include_str!("shaders.wgsl");
+static SHADER_PRELUDE: &str = include_str!("shaders.wgsl");
 
-pub struct RenderData {
-  pub main_uniforms:           UniformsBuffer,
-  pub main_data:               GpuDataTextureBuffer,
-  pub main_data_texture:       wgpu::Texture,
-  pub main_data_texture_view:  wgpu::TextureView,
-  pub data_texture_bind_group: wgpu::BindGroup,
-  pub pixel_perfect_size:      (u32, u32),
+// struct PipelineDesc {
+//   //layout:
+// }
+
+// pub trait PipelinesEnum: EnumArray<wgpu::RenderPipeline> + Send + Sync {
+//   fn describe(self) -> PipelineDesc;
+// }
+
+// pub trait TexturesEnum: EnumArray<wgpu::Texture> + Send + Sync {
+//   fn data(self) -> &'static [u8];
+// }
+
+pub trait ResourceKey: Sized + Send + Sync + 'static + EnumArray<Self::Output> {
+  type Output: Sized + Send + Sync + 'static;
+
+  fn load<App: PeterEngineApp>(self, rd: &mut RenderData<App>) -> Self::Output;
 }
 
-impl RenderData {
+pub struct RenderData<App: PeterEngineApp + ?Sized> {
+  pub main_uniforms:      UniformsBuffer,
+  pub device:             Arc<wgpu::Device>,
+  pub queue:              Arc<wgpu::Queue>,
+  pub shader:             wgpu::ShaderModule,
+  // pub main_data:               GpuDataTextureBuffer,
+  // pub main_data_texture:       wgpu::Texture,
+  // pub main_data_texture_view:  wgpu::TextureView,
+  // pub data_texture_bind_group: wgpu::BindGroup,
+  pub mipmap_gen:         MipMapGen,
+  pub pixel_perfect_size: (u32, u32),
+  pub resources:          AnyMap,
+  pub _phantom:           std::marker::PhantomData<App>,
+}
+
+unsafe impl<App: PeterEngineApp> Send for RenderData<App> {}
+unsafe impl<App: PeterEngineApp> Sync for RenderData<App> {}
+
+impl<App: PeterEngineApp> RenderData<App> {
+  pub fn load_resources<K: ResourceKey>(&mut self) {
+    if self.resources.contains::<EnumMap<K, K::Output>>() {
+      panic!("Resource type already loaded");
+    }
+    let mapping = EnumMap::from_fn(|key: K| key.load(self));
+    self.resources.insert::<EnumMap<K, K::Output>>(mapping);
+  }
+
+  pub fn get_resource<K: ResourceKey>(&self, key: K) -> &K::Output {
+    &self.resources.get::<EnumMap<K, K::Output>>().unwrap()[key]
+  }
+
   pub fn new(cc: &eframe::CreationContext) -> Self {
     let wgpu_render_state = cc.wgpu_render_state.as_ref().unwrap();
-    let device = &wgpu_render_state.device;
-    let queue = &wgpu_render_state.queue;
+    let device = Arc::clone(&wgpu_render_state.device);
+    let queue = Arc::clone(&wgpu_render_state.queue);
 
-    let main_data_texture = device.create_texture(&wgpu::TextureDescriptor {
-      size:            wgpu::Extent3d {
-        width:                 DATA_TEXTURE_SIZE as u32,
-        height:                DATA_TEXTURE_SIZE as u32,
-        depth_or_array_layers: 1,
-      },
-      mip_level_count: 1,
-      sample_count:    1,
-      dimension:       wgpu::TextureDimension::D2,
-      format:          wgpu::TextureFormat::R32Uint,
-      usage:           wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-      label:           Some("main_data_texture"),
-      view_formats:    &[], // FIXME
-    });
-    let main_data_texture_view = main_data_texture.create_view(&wgpu::TextureViewDescriptor {
-      format: Some(wgpu::TextureFormat::R32Uint),
-      ..Default::default()
-    });
-    let data_texture_bind_group_layout =
-      device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        entries: &[wgpu::BindGroupLayoutEntry {
-          binding:    0,
-          visibility: wgpu::ShaderStages::FRAGMENT,
-          ty:         wgpu::BindingType::Texture {
-            multisampled:   false,
-            view_dimension: wgpu::TextureViewDimension::D2,
-            sample_type:    wgpu::TextureSampleType::Uint,
-          },
-          count:      None,
-        }],
-        label:   Some("data_texture_bind_group_layout"),
-      });
-    let data_texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-      layout:  &data_texture_bind_group_layout,
-      entries: &[wgpu::BindGroupEntry {
-        binding:  0,
-        resource: wgpu::BindingResource::TextureView(&main_data_texture_view),
-      }],
-      label:   Some("data_texture_bind_group"),
-    });
+    // let main_data_texture = device.create_texture(&wgpu::TextureDescriptor {
+    //   size:            wgpu::Extent3d {
+    //     width:                 DATA_TEXTURE_SIZE as u32,
+    //     height:                DATA_TEXTURE_SIZE as u32,
+    //     depth_or_array_layers: 1,
+    //   },
+    //   mip_level_count: 1,
+    //   sample_count:    1,
+    //   dimension:       wgpu::TextureDimension::D2,
+    //   format:          wgpu::TextureFormat::R32Uint,
+    //   usage:           wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+    //   label:           Some("main_data_texture"),
+    //   view_formats:    &[], // FIXME
+    // });
+    // let main_data_texture_view = main_data_texture.create_view(&wgpu::TextureViewDescriptor {
+    //   format: Some(wgpu::TextureFormat::R32Uint),
+    //   ..Default::default()
+    // });
+    // let data_texture_bind_group_layout =
+    //   device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+    //     entries: &[wgpu::BindGroupLayoutEntry {
+    //       binding:    0,
+    //       visibility: wgpu::ShaderStages::FRAGMENT,
+    //       ty:         wgpu::BindingType::Texture {
+    //         multisampled:   false,
+    //         view_dimension: wgpu::TextureViewDimension::D2,
+    //         sample_type:    wgpu::TextureSampleType::Uint,
+    //       },
+    //       count:      None,
+    //     }],
+    //     label:   Some("data_texture_bind_group_layout"),
+    //   });
+    // let data_texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    //   layout:  &data_texture_bind_group_layout,
+    //   entries: &[wgpu::BindGroupEntry {
+    //     binding:  0,
+    //     resource: wgpu::BindingResource::TextureView(&main_data_texture_view),
+    //   }],
+    //   label:   Some("data_texture_bind_group"),
+    // });
 
+    let shader_source = format!("{}\n{}", SHADER_PRELUDE, App::SHADER_SOURCE);
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
       label:  None,
-      source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(SHADER_SOURCE)),
+      source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(&shader_source)),
     });
 
-    let main_uniforms = UniformsBuffer::new("main_uniforms", device);
+    let main_uniforms = UniformsBuffer::new("main_uniforms", &device);
 
     let default_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
       label:                None,
       bind_group_layouts:   &[&main_uniforms.bind_group_layout],
       push_constant_ranges: &[],
     });
-    let data_texture_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-      label:                None,
-      bind_group_layouts:   &[&main_uniforms.bind_group_layout, &data_texture_bind_group_layout],
-      push_constant_ranges: &[],
-    });
+    // let data_texture_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+    //   label:                None,
+    //   bind_group_layouts:   &[&main_uniforms.bind_group_layout, &data_texture_bind_group_layout],
+    //   push_constant_ranges: &[],
+    // });
 
     let no_blending: wgpu::ColorTargetState = wgpu_render_state.target_format.into();
     let mut alpha_blending = no_blending.clone();
@@ -653,8 +698,8 @@ impl RenderData {
       (
         layout = $layout:expr;
         vertex_buffers = $vertex_buffers:expr;
-        vertex = $vertex:literal;
-        fragment = $fragment:literal;
+        vertex = $vertex:expr;
+        fragment = $fragment:expr;
         topology = $topology:expr;
         blend_mode = $blend_mode:expr;
         $( depth_compare = $depth_compare:expr; )?
@@ -708,111 +753,110 @@ impl RenderData {
       }};
     }
 
+    let mipmap_gen = MipMapGen::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+
+    // let pipelines = EnumMap::from_fn(|pipeline_desc| {
+    //   todo!()
+    // });
+    // let textures = EnumMap::from_fn(|texture_desc| {
+    //   todo!()
+    // });
+    // let buffers = EnumMap::from_fn(|buffer_desc| {
+    //   todo!()
+    // });
+
     Self {
       main_uniforms,
-      main_data: GpuDataTextureBuffer::new(),
-      main_data_texture,
-      main_data_texture_view,
-      data_texture_bind_group,
+      device,
+      queue,
+      shader,
+      // main_data: GpuDataTextureBuffer::new(),
+      // main_data_texture,
+      // main_data_texture_view,
+      // data_texture_bind_group,
+      mipmap_gen,
       pixel_perfect_size: (1, 1),
+      resources: AnyMap::new(),
+      // pipelines,
+      // textures,
+      _phantom: std::marker::PhantomData,
     }
   }
 
-  pub fn flush_data_texture(&self, queue: &wgpu::Queue) {
-    let (row_count, bytes) = self.main_data.get_write_info();
-    if row_count == 0 {
-      return;
-    }
-    queue.write_texture(
+  pub fn load_texture(&self, bytes: &[u8]) -> (wgpu::Texture, wgpu::TextureView) {
+    let diffuse_image = image::load_from_memory(bytes).unwrap();
+    let diffuse_rgba = diffuse_image.to_rgba8();
+    let dimensions = diffuse_rgba.dimensions();
+    let texture_size = wgpu::Extent3d {
+      width:                 dimensions.0,
+      height:                dimensions.1,
+      depth_or_array_layers: 1,
+    };
+    let mip_level_count = 4;
+    let diffuse_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+      size: texture_size,
+      mip_level_count,
+      sample_count: 1,
+      dimension: wgpu::TextureDimension::D2,
+      format: wgpu::TextureFormat::Rgba8UnormSrgb,
+      usage: wgpu::TextureUsages::TEXTURE_BINDING
+        | wgpu::TextureUsages::COPY_DST
+        | wgpu::TextureUsages::RENDER_ATTACHMENT,
+      label: Some("font_texture"),
+      view_formats: &[],
+    });
+    self.queue.write_texture(
       wgpu::ImageCopyTexture {
-        texture:   &self.main_data_texture,
+        texture:   &diffuse_texture,
         mip_level: 0,
         origin:    wgpu::Origin3d::ZERO,
         aspect:    wgpu::TextureAspect::All,
       },
-      bytes,
+      &diffuse_rgba,
       wgpu::ImageDataLayout {
         offset:         0,
-        bytes_per_row:  Some(4 * DATA_TEXTURE_SIZE as u32),
-        rows_per_image: Some(row_count),
+        bytes_per_row:  Some(4 * dimensions.0),
+        rows_per_image: Some(dimensions.1),
       },
-      wgpu::Extent3d {
-        width:                 DATA_TEXTURE_SIZE as u32,
-        height:                row_count,
-        depth_or_array_layers: 1,
-      },
+      texture_size,
     );
-  }
-}
-
-// ==================== web handle ====================
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen]
-extern "C" {
-  #[wasm_bindgen(js_namespace = console)]
-  pub fn log(s: &str);
-}
-
-#[cfg(target_arch = "wasm32")]
-use eframe::WebRunner;
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
-
-#[cfg(target_arch = "wasm32")]
-#[derive(Clone)]
-#[wasm_bindgen]
-pub struct WebHandle {
-  runner: WebRunner,
-}
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen]
-impl WebHandle {
-  #[wasm_bindgen(constructor)]
-  pub fn new() -> Self {
-    Self {
-      runner: WebRunner::new(),
-    }
+    let mut mipmap_encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+      label: Some("mipmap_gen"),
+    });
+    self.mipmap_gen.generate_mipmaps(
+      &mut mipmap_encoder,
+      &self.device,
+      &diffuse_texture,
+      mip_level_count,
+    );
+    self.queue.submit(Some(mipmap_encoder.finish()));
+    let view = diffuse_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (diffuse_texture, view)
   }
 
-  #[wasm_bindgen]
-  pub async fn start(&self, canvas_id: &str) -> Result<(), wasm_bindgen::JsValue> {
-    let mut web_options = eframe::WebOptions::default();
-    web_options.depth_buffer = 32;
-    web_options.wgpu_options.supported_backends = wgpu::Backends::GL;
-    web_sys::window()
-      .unwrap()
-      .document()
-      .unwrap()
-      .get_element_by_id("loadingMessage")
-      .unwrap()
-      .set_attribute("style", "display: none")
-      .unwrap();
-    log("Launching app from WASM");
-    self
-      .runner
-      .start(canvas_id, web_options, Box::new(|cc| Box::new(ReactorSimulatorApp::new(cc))))
-      .await
-  }
-
-  #[wasm_bindgen]
-  pub fn destroy(&self) {
-    self.runner.destroy();
-  }
-
-  #[wasm_bindgen]
-  pub fn has_panicked(&self) -> bool {
-    self.runner.has_panicked()
-  }
-
-  #[wasm_bindgen]
-  pub fn panic_message(&self) -> Option<String> {
-    self.runner.panic_summary().map(|s| s.message())
-  }
-
-  #[wasm_bindgen]
-  pub fn panic_callstack(&self) -> Option<String> {
-    self.runner.panic_summary().map(|s| s.callstack())
-  }
+  // pub fn flush_data_texture(&self, queue: &wgpu::Queue) {
+  //   let (row_count, bytes) = self.main_data.get_write_info();
+  //   if row_count == 0 {
+  //     return;
+  //   }
+  //   queue.write_texture(
+  //     wgpu::ImageCopyTexture {
+  //       texture:   &self.main_data_texture,
+  //       mip_level: 0,
+  //       origin:    wgpu::Origin3d::ZERO,
+  //       aspect:    wgpu::TextureAspect::All,
+  //     },
+  //     bytes,
+  //     wgpu::ImageDataLayout {
+  //       offset:         0,
+  //       bytes_per_row:  Some(4 * DATA_TEXTURE_SIZE as u32),
+  //       rows_per_image: Some(row_count),
+  //     },
+  //     wgpu::Extent3d {
+  //       width:                 DATA_TEXTURE_SIZE as u32,
+  //       height:                row_count,
+  //       depth_or_array_layers: 1,
+  //     },
+  //   );
+  // }
 }
