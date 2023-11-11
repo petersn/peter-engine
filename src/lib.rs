@@ -19,7 +19,9 @@ pub trait PeterEngineApp: Send + 'static {
   const WINDOW_TITLE: &'static str;
   const SHADER_SOURCE: &'static str;
 
-  fn init(&mut self, cc: &eframe::CreationContext, render_data: &mut RenderData<Self>);
+  type RenderResources: Send + Sync + 'static;
+
+  fn init(&mut self, cc: &eframe::CreationContext, render_data: &mut RenderData) -> Self::RenderResources;
   fn update(&mut self, egui_ctx: &egui::Context, frame: &mut eframe::Frame, dt: f32);
   fn central_panel_input(
     &mut self,
@@ -30,14 +32,16 @@ pub trait PeterEngineApp: Send + 'static {
   }
   fn prepare(
     &mut self,
-    render_data: &mut RenderData<Self>,
+    render_data: &mut RenderData,
+    resources: &mut Self::RenderResources,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     encoder: &mut wgpu::CommandEncoder,
   ) -> Vec<wgpu::CommandBuffer>;
   fn paint(
     &mut self,
-    render_data: &RenderData<Self>,
+    render_data: &RenderData,
+    resources: &Self::RenderResources,
     info: eframe::epaint::PaintCallbackInfo,
     render_pass: &mut wgpu::RenderPass,
   );
@@ -51,10 +55,10 @@ impl<GameState: PeterEngineApp> EframeApp<GameState> {
   pub fn new(mut game_state: GameState, cc: &eframe::CreationContext) -> Self {
     let wgpu_render_state = cc.wgpu_render_state.as_ref().unwrap();
     let mut w = wgpu_render_state.renderer.write();
-    let mut rd = RenderData::<GameState>::new(cc);
-    game_state.init(cc, &mut rd);
+    let mut rd = RenderData::new(cc, GameState::SHADER_SOURCE);
+    let resources = game_state.init(cc, &mut rd);
     let locked_state = Arc::new(Mutex::new(game_state));
-    w.callback_resources.insert(rd);
+    w.callback_resources.insert((rd, resources));
     Self { locked_state }
   }
 }
@@ -72,10 +76,9 @@ impl<GameState: PeterEngineApp> CallbackTrait for PaintCallback<GameState> {
     encoder: &mut wgpu::CommandEncoder,
     callback_resources: &mut CallbackResources,
   ) -> Vec<wgpu::CommandBuffer> {
-    let render_data = callback_resources.get_mut::<RenderData<GameState>>().unwrap();
+    let (render_data, resources) = callback_resources.get_mut::<(RenderData, GameState::RenderResources)>().unwrap();
     render_data.pixel_perfect_size = self.pixel_perfect_size;
-    // FIXME: I should maybe assert that the above device and queue are the same as the ones in render_data.
-    self.locked_state.lock().unwrap().prepare(render_data, device, queue, encoder)
+    self.locked_state.lock().unwrap().prepare(render_data, resources, device, queue, encoder)
   }
 
   fn paint<'rp>(
@@ -84,8 +87,8 @@ impl<GameState: PeterEngineApp> CallbackTrait for PaintCallback<GameState> {
     render_pass: &mut wgpu::RenderPass<'rp>,
     callback_resources: &'rp CallbackResources,
   ) {
-    let render_data = callback_resources.get::<RenderData<GameState>>().unwrap();
-    self.locked_state.lock().unwrap().paint(render_data, info, render_pass)
+    let (render_data, resources) = callback_resources.get::<(RenderData, GameState::RenderResources)>().unwrap();
+    self.locked_state.lock().unwrap().paint(render_data, resources, info, render_pass)
   }
 }
 
@@ -134,7 +137,7 @@ impl<GameState: PeterEngineApp> eframe::App for EframeApp<GameState> {
 pub fn launch<GameState: PeterEngineApp>(game_state: GameState) -> Result<(), eframe::Error> {
   let mut native_options = eframe::NativeOptions::default();
   native_options.depth_buffer = 32;
-  native_options.multisampling = 4;
+  native_options.multisampling = crate::graphics::MSAA_COUNT as u16;
   eframe::run_native(
     GameState::WINDOW_TITLE,
     native_options,

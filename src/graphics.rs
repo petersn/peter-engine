@@ -9,7 +9,9 @@ use wgpu::BufferSlice;
 use crate::mipmapping::MipMapGen;
 use crate::PeterEngineApp;
 
-const DATA_TEXTURE_SIZE: usize = 1024;
+// const DATA_TEXTURE_SIZE: usize = 1024;
+pub const MSAA_COUNT: u32 = 1;
+pub const MIP_LEVEL_COUNT: u32 = 4;
 
 pub struct Transform {
   pub translation: Vector3<f32>,
@@ -541,38 +543,38 @@ impl GeometryBuffer<Vertex> {
   }
 }
 
-pub struct GpuDataTextureBuffer {
-  pub data: Vec<u32>,
-  pub ptr:  usize,
-}
+// pub struct GpuDataTextureBuffer {
+//   pub data: Vec<u32>,
+//   pub ptr:  usize,
+// }
 
-impl GpuDataTextureBuffer {
-  pub fn new() -> Self {
-    Self {
-      data: vec![0; DATA_TEXTURE_SIZE * DATA_TEXTURE_SIZE],
-      ptr:  0,
-    }
-  }
+// impl GpuDataTextureBuffer {
+//   pub fn new() -> Self {
+//     Self {
+//       data: vec![0; DATA_TEXTURE_SIZE * DATA_TEXTURE_SIZE],
+//       ptr:  0,
+//     }
+//   }
 
-  pub fn push(&mut self, value: u32) {
-    self.data[self.ptr] = value;
-    self.ptr += 1;
-  }
+//   pub fn push(&mut self, value: u32) {
+//     self.data[self.ptr] = value;
+//     self.ptr += 1;
+//   }
 
-  pub fn reset(&mut self) {
-    self.ptr = 0;
-  }
+//   pub fn reset(&mut self) {
+//     self.ptr = 0;
+//   }
 
-  /// Returns (rows of image data, slice of bytes).
-  pub fn get_write_info(&self) -> (u32, &[u8]) {
-    // Round up to a full row.
-    let rows = (self.ptr + DATA_TEXTURE_SIZE - 1) / DATA_TEXTURE_SIZE;
-    let bytes = 4 * rows * DATA_TEXTURE_SIZE;
-    (rows as u32, unsafe {
-      std::slice::from_raw_parts(self.data.as_ptr() as *const u8, bytes as usize)
-    })
-  }
-}
+//   /// Returns (rows of image data, slice of bytes).
+//   pub fn get_write_info(&self) -> (u32, &[u8]) {
+//     // Round up to a full row.
+//     let rows = (self.ptr + DATA_TEXTURE_SIZE - 1) / DATA_TEXTURE_SIZE;
+//     let bytes = 4 * rows * DATA_TEXTURE_SIZE;
+//     (rows as u32, unsafe {
+//       std::slice::from_raw_parts(self.data.as_ptr() as *const u8, bytes as usize)
+//     })
+//   }
+// }
 
 pub static SHADER_PRELUDE: &str = include_str!("shaders.wgsl");
 
@@ -588,13 +590,74 @@ pub static SHADER_PRELUDE: &str = include_str!("shaders.wgsl");
 //   fn data(self) -> &'static [u8];
 // }
 
-pub trait ResourceKey: Sized + Send + Sync + 'static + EnumArray<Self::Output> {
-  type Output: Sized + Send + Sync + 'static;
+// pub trait ResourceKey: Sized + Send + Sync + 'static + EnumArray<Self::Output> {
+//   type Output: Sized + Send + Sync + 'static;
+//   fn load<App: PeterEngineApp>(self, rd: &mut RenderData<App>) -> Self::Output;
+// }
 
-  fn load<App: PeterEngineApp>(self, rd: &mut RenderData<App>) -> Self::Output;
+#[macro_export]
+macro_rules! make_pipeline {
+  (
+    render_data = $rd:expr;
+    layout = $layout:expr;
+    vertex_buffers = $vertex_buffers:expr;
+    vertex = $vertex:expr;
+    fragment = $fragment:expr;
+    topology = $topology:expr;
+    blend_mode = $blend_mode:expr;
+    $( depth_compare = $depth_compare:expr; )?
+    $( depth_write = $depth_write:expr; )?
+  ) => {{
+    let rd = $rd;
+    #[allow(unused_mut, unused_assignments)]
+    let mut depth_compare_enabled = true;
+    #[allow(unused_mut, unused_assignments)]
+    let mut depth_write_enabled = true;
+    $( depth_compare_enabled = $depth_compare; )?
+    $( depth_write_enabled = $depth_write; )?
+    rd.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+      label:         None,
+      layout:        Some(&$layout),
+      vertex:        wgpu::VertexState {
+        module:      &rd.shader,
+        entry_point: $vertex,
+        buffers:     &$vertex_buffers,
+      },
+      fragment:      Some(wgpu::FragmentState {
+        module:      &rd.shader,
+        entry_point: $fragment,
+        targets:     &[Some($blend_mode.clone())],
+      }),
+      primitive:     wgpu::PrimitiveState {
+        topology:           $topology,
+        strip_index_format: None,
+        front_face:         wgpu::FrontFace::Ccw,
+        cull_mode:          None,
+        polygon_mode:       wgpu::PolygonMode::Fill,
+        unclipped_depth:    false,
+        conservative:       false,
+      },
+      depth_stencil: Some(wgpu::DepthStencilState {
+        format:              wgpu::TextureFormat::Depth32Float,
+        depth_write_enabled,
+        depth_compare:       match depth_compare_enabled {
+          true => wgpu::CompareFunction::Less,
+          false => wgpu::CompareFunction::Always,
+        },
+        stencil:             wgpu::StencilState::default(),
+        bias:                wgpu::DepthBiasState::default(),
+      }),
+      multisample:   wgpu::MultisampleState {
+        count:                     MSAA_COUNT,
+        mask:                      !0,
+        alpha_to_coverage_enabled: false,
+      },
+      multiview:     None,
+    })
+  }};
 }
 
-pub struct RenderData<App: PeterEngineApp + ?Sized> {
+pub struct RenderData {
   pub main_uniforms:      UniformsBuffer,
   pub device:             Arc<wgpu::Device>,
   pub queue:              Arc<wgpu::Queue>,
@@ -605,37 +668,37 @@ pub struct RenderData<App: PeterEngineApp + ?Sized> {
   // pub data_texture_bind_group: wgpu::BindGroup,
   pub mipmap_gen:         MipMapGen,
   pub pixel_perfect_size: (u32, u32),
-  pub resources:          AnyMap,
-  pub _phantom:           std::marker::PhantomData<App>,
+  // pub resources:          AnyMap,
+  // pub resources:          App::RenderResources,
 }
 
 // unsafe impl<App: PeterEngineApp> Send for RenderData<App> {}
 // unsafe impl<App: PeterEngineApp> Sync for RenderData<App> {}
 
-impl<App: PeterEngineApp> RenderData<App> {
-  pub fn load_resources<K: ResourceKey>(&mut self) {
-    if self.resources.contains::<EnumMap<K, K::Output>>() {
-      panic!("Resource type already loaded");
-    }
-    let mapping = EnumMap::from_fn(|key: K| key.load(self));
-    self.resources.insert::<EnumMap<K, K::Output>>(mapping);
-  }
+impl RenderData {
+  // pub fn load_resources<K: ResourceKey>(&mut self) {
+  //   if self.resources.contains::<EnumMap<K, K::Output>>() {
+  //     panic!("Resource type already loaded");
+  //   }
+  //   let mapping = EnumMap::from_fn(|key: K| key.load(self));
+  //   self.resources.insert::<EnumMap<K, K::Output>>(mapping);
+  // }
 
-  pub fn get_resource<K: ResourceKey>(&self, key: K) -> &K::Output {
-    match self.resources.get::<EnumMap<K, K::Output>>() {
-      Some(mapping) => &mapping[key],
-      None => panic!("Resource not loaded: {}", std::any::type_name::<K>()),
-    }
-  }
+  // pub fn get_resource<K: ResourceKey>(&self, key: K) -> &K::Output {
+  //   match self.resources.get::<EnumMap<K, K::Output>>() {
+  //     Some(mapping) => &mapping[key],
+  //     None => panic!("Resource not loaded: {}", std::any::type_name::<K>()),
+  //   }
+  // }
 
-  pub fn get_resource_mut<K: ResourceKey>(&mut self, key: K) -> &mut K::Output {
-    match self.resources.get_mut::<EnumMap<K, K::Output>>() {
-      Some(mapping) => &mut mapping[key],
-      None => panic!("Resource not loaded: {}", std::any::type_name::<K>()),
-    }
-  }
+  // pub fn get_resource_mut<K: ResourceKey>(&mut self, key: K) -> &mut K::Output {
+  //   match self.resources.get_mut::<EnumMap<K, K::Output>>() {
+  //     Some(mapping) => &mut mapping[key],
+  //     None => panic!("Resource not loaded: {}", std::any::type_name::<K>()),
+  //   }
+  // }
 
-  pub fn new(cc: &eframe::CreationContext) -> Self {
+  pub fn new(cc: &eframe::CreationContext, shader_source: &str) -> Self {
     let wgpu_render_state = cc.wgpu_render_state.as_ref().unwrap();
     let device = Arc::clone(&wgpu_render_state.device);
     let queue = Arc::clone(&wgpu_render_state.queue);
@@ -683,7 +746,7 @@ impl<App: PeterEngineApp> RenderData<App> {
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
       label:  None,
-      source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(App::SHADER_SOURCE)),
+      source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(shader_source)),
     });
 
     let main_uniforms = UniformsBuffer::new("main_uniforms", &device);
@@ -702,65 +765,6 @@ impl<App: PeterEngineApp> RenderData<App> {
     let no_blending: wgpu::ColorTargetState = wgpu_render_state.target_format.into();
     let mut alpha_blending = no_blending.clone();
     alpha_blending.blend = Some(wgpu::BlendState::ALPHA_BLENDING);
-
-    macro_rules! make_pipeline {
-      (
-        layout = $layout:expr;
-        vertex_buffers = $vertex_buffers:expr;
-        vertex = $vertex:expr;
-        fragment = $fragment:expr;
-        topology = $topology:expr;
-        blend_mode = $blend_mode:expr;
-        $( depth_compare = $depth_compare:expr; )?
-        $( depth_write = $depth_write:expr; )?
-      ) => {{
-        #[allow(unused_mut, unused_assignments)]
-        let mut depth_compare_enabled = true;
-        #[allow(unused_mut, unused_assignments)]
-        let mut depth_write_enabled = true;
-        $( depth_compare_enabled = $depth_compare; )?
-        $( depth_write_enabled = $depth_write; )?
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-          label:         None,
-          layout:        Some(&$layout),
-          vertex:        wgpu::VertexState {
-            module:      &shader,
-            entry_point: $vertex,
-            buffers:     &$vertex_buffers,
-          },
-          fragment:      Some(wgpu::FragmentState {
-            module:      &shader,
-            entry_point: $fragment,
-            targets:     &[Some($blend_mode.clone())],
-          }),
-          primitive:     wgpu::PrimitiveState {
-            topology:           $topology,
-            strip_index_format: None,
-            front_face:         wgpu::FrontFace::Ccw,
-            cull_mode:          None,
-            polygon_mode:       wgpu::PolygonMode::Fill,
-            unclipped_depth:    false,
-            conservative:       false,
-          },
-          depth_stencil: Some(wgpu::DepthStencilState {
-            format:              wgpu::TextureFormat::Depth32Float,
-            depth_write_enabled,
-            depth_compare:       match depth_compare_enabled {
-              true => wgpu::CompareFunction::Less,
-              false => wgpu::CompareFunction::Always,
-            },
-            stencil:             wgpu::StencilState::default(),
-            bias:                wgpu::DepthBiasState::default(),
-          }),
-          multisample:   wgpu::MultisampleState {
-            count:                     1, //$msaa_samples,
-            mask:                      !0,
-            alpha_to_coverage_enabled: false,
-          },
-          multiview:     None,
-        })
-      }};
-    }
 
     let mipmap_gen = MipMapGen::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
@@ -785,10 +789,10 @@ impl<App: PeterEngineApp> RenderData<App> {
       // data_texture_bind_group,
       mipmap_gen,
       pixel_perfect_size: (1, 1),
-      resources: AnyMap::new(),
+      // resources: AnyMap::new(),
       // pipelines,
       // textures,
-      _phantom: std::marker::PhantomData,
+      // _phantom: std::marker::PhantomData,
     }
   }
 
@@ -801,10 +805,9 @@ impl<App: PeterEngineApp> RenderData<App> {
       height:                dimensions.1,
       depth_or_array_layers: 1,
     };
-    let mip_level_count = 4;
     let diffuse_texture = self.device.create_texture(&wgpu::TextureDescriptor {
       size: texture_size,
-      mip_level_count,
+      mip_level_count: MIP_LEVEL_COUNT,
       sample_count: 1,
       dimension: wgpu::TextureDimension::D2,
       format: wgpu::TextureFormat::Rgba8UnormSrgb,
@@ -836,7 +839,7 @@ impl<App: PeterEngineApp> RenderData<App> {
       &mut mipmap_encoder,
       &self.device,
       &diffuse_texture,
-      mip_level_count,
+      MIP_LEVEL_COUNT,
     );
     self.queue.submit(Some(mipmap_encoder.finish()));
     let view = diffuse_texture.create_view(&wgpu::TextureViewDescriptor::default());
