@@ -5,6 +5,8 @@ pub use eframe;
 use eframe::egui_wgpu::{Callback, CallbackResources, CallbackTrait};
 pub use eframe::{egui, wgpu};
 pub use enum_map;
+pub use anymap;
+pub use image;
 use graphics::RenderData;
 pub use nalgebra;
 
