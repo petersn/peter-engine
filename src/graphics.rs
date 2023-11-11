@@ -216,7 +216,7 @@ pub unsafe fn slice_as_u8_slice<T: Sized>(p: &[T]) -> &[u8] {
   std::slice::from_raw_parts((&p[0] as *const T) as *const u8, std::mem::size_of::<T>() * p.len())
 }
 
-pub struct ResizingBuffer<T> {
+pub struct ResizingBuffer<T: Copy> {
   pub label:          String,
   pub usage:          wgpu::BufferUsages,
   /// The size of the buffer in bytes is `std::mem::size_of::<T>() * len`.
@@ -224,7 +224,7 @@ pub struct ResizingBuffer<T> {
   pub contents:       Vec<T>,
 }
 
-impl<T> ResizingBuffer<T> {
+impl<T: Copy> ResizingBuffer<T> {
   pub fn new(label: &str, usage: wgpu::BufferUsages) -> Self {
     Self {
       label: label.to_string(),
@@ -287,8 +287,8 @@ impl<T> ResizingBuffer<T> {
   }
 
   #[inline]
-  pub fn append(&mut self, values: &mut Vec<T>) {
-    self.contents.append(values);
+  pub fn extend_from_slice(&mut self, values: &[T]) {
+    self.contents.extend_from_slice(values);
   }
 
   #[inline]
@@ -494,12 +494,12 @@ impl UniformsBuffer {
   }
 }
 
-pub struct GeometryBuffer<V = Vertex> {
+pub struct GeometryBuffer<V: Copy = Vertex> {
   pub vertex_buffer: ResizingBuffer<V>,
   pub index_buffer:  ResizingBuffer<u32>,
 }
 
-impl<V> GeometryBuffer<V> {
+impl<V: Copy> GeometryBuffer<V> {
   pub fn new(name: &str) -> Self {
     Self {
       vertex_buffer: ResizingBuffer::new(

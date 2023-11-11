@@ -66,31 +66,31 @@ impl PeterEngineApp for TestApp {
 
   fn prepare(
     &mut self,
-    rd: &mut RenderData,
+    _rd: &mut RenderData,
     resources: &mut Self::RenderResources,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    encoder: &mut wgpu::CommandEncoder,
+    _encoder: &mut wgpu::CommandEncoder,
   ) -> Vec<wgpu::CommandBuffer> {
     resources.trianges.clear();
-    resources.trianges.vertex_buffer.push(Vertex {
-      position: [0.0, 0.0, 0.0],
-      color: [1.0, 0.0, 0.0, 1.0],
-      uv: [0.0, 0.0],
-    });
-    resources.trianges.vertex_buffer.push(Vertex {
-      position: [1.0, 0.0, 0.0],
-      color: [0.0, 1.0, 0.0, 1.0],
-      uv: [1.0, 0.0],
-    });
-    resources.trianges.vertex_buffer.push(Vertex {
-      position: [0.0, 1.0, 0.0],
-      color: [0.0, 0.0, 1.0, 1.0],
-      uv: [0.0, 1.0],
-    });
-    resources.trianges.index_buffer.push(0);
-    resources.trianges.index_buffer.push(1);
-    resources.trianges.index_buffer.push(2);
+    resources.trianges.vertex_buffer.extend_from_slice(&[
+      Vertex {
+        position: [0.0, 0.0, 0.0],
+        color: [1.0, 0.0, 0.0, 1.0],
+        uv: [0.0, 0.0],
+      },
+      Vertex {
+        position: [1.0, 0.0, 0.0],
+        color: [0.0, 1.0, 0.0, 1.0],
+        uv: [0.0, 0.0],
+      },
+      Vertex {
+        position: [0.0, 1.0, 0.0],
+        color: [0.0, 0.0, 1.0, 1.0],
+        uv: [0.0, 0.0],
+      },
+    ]);
+    resources.trianges.index_buffer.extend_from_slice(&[0, 1, 2]);
     resources.trianges.update(device, queue);
     Vec::new()
   }
