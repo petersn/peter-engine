@@ -7,9 +7,39 @@ use wgpu::{BufferSlice, BindGroupLayoutEntry};
 use crate::mipmapping::MipMapGen;
 use crate::PeterEngineApp;
 
-// const DATA_TEXTURE_SIZE: usize = 1024;
+const DATA_TEXTURE_SIZE: usize = 2048;
 pub const MSAA_COUNT: u32 = 1;
 pub const MIP_LEVEL_COUNT: u32 = 4;
+
+pub const LINEAR_SAMPLER_DESCRIPTOR: wgpu::SamplerDescriptor = wgpu::SamplerDescriptor {
+  label:            Some("linear_sampler"),
+  address_mode_u:   wgpu::AddressMode::ClampToEdge,
+  address_mode_v:   wgpu::AddressMode::ClampToEdge,
+  address_mode_w:   wgpu::AddressMode::ClampToEdge,
+  mag_filter:       wgpu::FilterMode::Linear,
+  min_filter:       wgpu::FilterMode::Linear,
+  mipmap_filter:    wgpu::FilterMode::Linear,
+  lod_min_clamp:    0.0,
+  lod_max_clamp:    32.0,
+  compare:          None,
+  anisotropy_clamp: 1,
+  border_color:     None,
+};
+
+pub const NEAREST_SAMPLER_DESCRIPTOR: wgpu::SamplerDescriptor = wgpu::SamplerDescriptor {
+  label:            Some("nearest_sampler"),
+  address_mode_u:   wgpu::AddressMode::ClampToEdge,
+  address_mode_v:   wgpu::AddressMode::ClampToEdge,
+  address_mode_w:   wgpu::AddressMode::ClampToEdge,
+  mag_filter:       wgpu::FilterMode::Nearest,
+  min_filter:       wgpu::FilterMode::Nearest,
+  mipmap_filter:    wgpu::FilterMode::Nearest,
+  lod_min_clamp:    0.0,
+  lod_max_clamp:    32.0,
+  compare:          None,
+  anisotropy_clamp: 1,
+  border_color:     None,
+};
 
 pub struct Transform {
   pub translation: Vector3<f32>,
@@ -214,6 +244,47 @@ pub unsafe fn ref_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
 
 pub unsafe fn slice_as_u8_slice<T: Sized>(p: &[T]) -> &[u8] {
   std::slice::from_raw_parts((&p[0] as *const T) as *const u8, std::mem::size_of::<T>() * p.len())
+}
+
+pub struct ImageTexture {
+  pub texture:      wgpu::Texture,
+  pub texture_view: wgpu::TextureView,
+  pub bind_group:   wgpu::BindGroup,
+}
+
+pub struct DataTexture {
+  pub texture:      wgpu::Texture,
+  pub texture_view: wgpu::TextureView,
+  pub bind_group:   wgpu::BindGroup,
+  pub cpu_buffer:   GpuDataTextureBuffer,
+}
+
+impl DataTexture {
+  pub fn flush_data_texture(&self, queue: &wgpu::Queue) {
+    let (row_count, bytes) = self.cpu_buffer.get_write_info();
+    if row_count == 0 {
+      return;
+    }
+    queue.write_texture(
+      wgpu::ImageCopyTexture {
+        texture:   &self.texture,
+        mip_level: 0,
+        origin:    wgpu::Origin3d::ZERO,
+        aspect:    wgpu::TextureAspect::All,
+      },
+      bytes,
+      wgpu::ImageDataLayout {
+        offset:         0,
+        bytes_per_row:  Some(4 * DATA_TEXTURE_SIZE as u32),
+        rows_per_image: Some(row_count),
+      },
+      wgpu::Extent3d {
+        width:                 DATA_TEXTURE_SIZE as u32,
+        height:                row_count,
+        depth_or_array_layers: 1,
+      },
+    );
+  }
 }
 
 pub struct ResizingBuffer<T: Copy> {
@@ -541,38 +612,38 @@ impl GeometryBuffer<Vertex> {
   }
 }
 
-// pub struct GpuDataTextureBuffer {
-//   pub data: Vec<u32>,
-//   pub ptr:  usize,
-// }
+pub struct GpuDataTextureBuffer {
+  pub data: Vec<u32>,
+  pub ptr:  usize,
+}
 
-// impl GpuDataTextureBuffer {
-//   pub fn new() -> Self {
-//     Self {
-//       data: vec![0; DATA_TEXTURE_SIZE * DATA_TEXTURE_SIZE],
-//       ptr:  0,
-//     }
-//   }
+impl GpuDataTextureBuffer {
+  pub fn new() -> Self {
+    Self {
+      data: vec![0; DATA_TEXTURE_SIZE * DATA_TEXTURE_SIZE],
+      ptr:  0,
+    }
+  }
 
-//   pub fn push(&mut self, value: u32) {
-//     self.data[self.ptr] = value;
-//     self.ptr += 1;
-//   }
+  pub fn push(&mut self, value: u32) {
+    self.data[self.ptr] = value;
+    self.ptr += 1;
+  }
 
-//   pub fn reset(&mut self) {
-//     self.ptr = 0;
-//   }
+  pub fn reset(&mut self) {
+    self.ptr = 0;
+  }
 
-//   /// Returns (rows of image data, slice of bytes).
-//   pub fn get_write_info(&self) -> (u32, &[u8]) {
-//     // Round up to a full row.
-//     let rows = (self.ptr + DATA_TEXTURE_SIZE - 1) / DATA_TEXTURE_SIZE;
-//     let bytes = 4 * rows * DATA_TEXTURE_SIZE;
-//     (rows as u32, unsafe {
-//       std::slice::from_raw_parts(self.data.as_ptr() as *const u8, bytes as usize)
-//     })
-//   }
-// }
+  /// Returns (rows of image data, slice of bytes).
+  pub fn get_write_info(&self) -> (u32, &[u8]) {
+    // Round up to a full row.
+    let rows = (self.ptr + DATA_TEXTURE_SIZE - 1) / DATA_TEXTURE_SIZE;
+    let bytes = 4 * rows * DATA_TEXTURE_SIZE;
+    (rows as u32, unsafe {
+      std::slice::from_raw_parts(self.data.as_ptr() as *const u8, bytes as usize)
+    })
+  }
+}
 
 pub static SHADER_PRELUDE: &str = include_str!("shaders.wgsl");
 
@@ -595,10 +666,13 @@ pub static SHADER_PRELUDE: &str = include_str!("shaders.wgsl");
 
 pub enum BindingDesc {
   Uniforms,
-  Simple {
-    visibility: wgpu::ShaderStages,
-    ty:         wgpu::BufferBindingType,
-  },
+  // Simple {
+  //   visibility: wgpu::ShaderStages,
+  //   ty:         wgpu::BufferBindingType,
+  // },
+  Texture { filterable: bool },
+  Sampler { filterable: bool },
+  DataTexture,
   Custom(wgpu::BindGroupLayoutEntry),
 }
 
@@ -657,6 +731,9 @@ pub struct RenderData {
   pub device:             Arc<wgpu::Device>,
   pub queue:              Arc<wgpu::Queue>,
   pub shader:             wgpu::ShaderModule,
+  pub linear_texture_sampler:    wgpu::Sampler,
+  pub nearest_texture_sampler:   wgpu::Sampler,
+  pub textured_bind_group_layout: wgpu::BindGroupLayout,
   // pub main_data:               GpuDataTextureBuffer,
   // pub main_data_texture:       wgpu::Texture,
   // pub main_data_texture_view:  wgpu::TextureView,
@@ -698,50 +775,33 @@ impl RenderData {
     let device = Arc::clone(&wgpu_render_state.device);
     let queue = Arc::clone(&wgpu_render_state.queue);
 
-    // let main_data_texture = device.create_texture(&wgpu::TextureDescriptor {
-    //   size:            wgpu::Extent3d {
-    //     width:                 DATA_TEXTURE_SIZE as u32,
-    //     height:                DATA_TEXTURE_SIZE as u32,
-    //     depth_or_array_layers: 1,
-    //   },
-    //   mip_level_count: 1,
-    //   sample_count:    1,
-    //   dimension:       wgpu::TextureDimension::D2,
-    //   format:          wgpu::TextureFormat::R32Uint,
-    //   usage:           wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-    //   label:           Some("main_data_texture"),
-    //   view_formats:    &[], // FIXME
-    // });
-    // let main_data_texture_view = main_data_texture.create_view(&wgpu::TextureViewDescriptor {
-    //   format: Some(wgpu::TextureFormat::R32Uint),
-    //   ..Default::default()
-    // });
-    // let data_texture_bind_group_layout =
-    //   device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-    //     entries: &[wgpu::BindGroupLayoutEntry {
-    //       binding:    0,
-    //       visibility: wgpu::ShaderStages::FRAGMENT,
-    //       ty:         wgpu::BindingType::Texture {
-    //         multisampled:   false,
-    //         view_dimension: wgpu::TextureViewDimension::D2,
-    //         sample_type:    wgpu::TextureSampleType::Uint,
-    //       },
-    //       count:      None,
-    //     }],
-    //     label:   Some("data_texture_bind_group_layout"),
-    //   });
-    // let data_texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-    //   layout:  &data_texture_bind_group_layout,
-    //   entries: &[wgpu::BindGroupEntry {
-    //     binding:  0,
-    //     resource: wgpu::BindingResource::TextureView(&main_data_texture_view),
-    //   }],
-    //   label:   Some("data_texture_bind_group"),
-    // });
-
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
       label:  None,
       source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(shader_source)),
+    });
+
+    let linear_texture_sampler = device.create_sampler(&LINEAR_SAMPLER_DESCRIPTOR);
+    let nearest_texture_sampler = device.create_sampler(&NEAREST_SAMPLER_DESCRIPTOR);
+    let textured_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+      entries: &[
+        wgpu::BindGroupLayoutEntry {
+          binding:    0,
+          visibility: wgpu::ShaderStages::FRAGMENT,
+          ty:         wgpu::BindingType::Texture {
+            multisampled:   false,
+            view_dimension: wgpu::TextureViewDimension::D2,
+            sample_type:    wgpu::TextureSampleType::Float { filterable: true },
+          },
+          count:      None,
+        },
+        wgpu::BindGroupLayoutEntry {
+          binding:    1,
+          visibility: wgpu::ShaderStages::FRAGMENT,
+          ty:         wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+          count:      None,
+        },
+      ],
+      label:   Some("textured_bind_group_layout"),
     });
 
     let main_uniforms = UniformsBuffer::new("main_uniforms", &device);
@@ -775,6 +835,9 @@ impl RenderData {
       device,
       queue,
       shader,
+      linear_texture_sampler,
+      nearest_texture_sampler,
+      textured_bind_group_layout,
       // main_data: GpuDataTextureBuffer::new(),
       // main_data_texture,
       // main_data_texture_view,
@@ -808,17 +871,46 @@ impl RenderData {
             },
             count:      None,
           },
-          BindingDesc::Simple {
-            visibility,
-            ty,
-          } => wgpu::BindGroupLayoutEntry {
+          // BindingDesc::Simple {
+          //   visibility,
+          //   ty,
+          // } => wgpu::BindGroupLayoutEntry {
+          //   binding:    binding_index as u32,
+          //   visibility: *visibility,
+          //   ty:         wgpu::BindingType::Buffer {
+          //     ty:                 *ty,
+          //     has_dynamic_offset: false,
+          //     min_binding_size:   None,
+          //   },
+          //   count:      None,
+          // },
+          BindingDesc::Texture { filterable } => wgpu::BindGroupLayoutEntry {
             binding:    binding_index as u32,
-            visibility: *visibility,
-            ty:         wgpu::BindingType::Buffer {
-              ty:                 *ty,
-              has_dynamic_offset: false,
-              min_binding_size:   None,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty:         wgpu::BindingType::Texture {
+              multisampled:   false,
+              view_dimension: wgpu::TextureViewDimension::D2,
+              sample_type:    wgpu::TextureSampleType::Float { filterable: *filterable },
             },
+            count:      None,
+          },
+          BindingDesc::DataTexture => wgpu::BindGroupLayoutEntry {
+            binding:    binding_index as u32,
+            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            ty:         wgpu::BindingType::Texture {
+              multisampled:   false,
+              view_dimension: wgpu::TextureViewDimension::D2,
+              sample_type:    wgpu::TextureSampleType::Uint,
+            },
+            count:      None,
+          },
+          BindingDesc::Sampler { filterable } => wgpu::BindGroupLayoutEntry {
+            binding:    binding_index as u32,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty:         wgpu::BindingType::Sampler(match *filterable {
+              true => wgpu::SamplerBindingType::Filtering,
+              false => wgpu::SamplerBindingType::NonFiltering,
+            }),
             count:      None,
           },
           BindingDesc::Custom(bind_group_layout_entry) => bind_group_layout_entry.clone(),
@@ -883,7 +975,12 @@ impl RenderData {
     })
   }
 
-  pub fn load_texture(&self, bytes: &[u8]) -> (wgpu::Texture, wgpu::TextureView) {
+  pub fn load_texture(
+    &self,
+    bytes: &[u8],
+    filter: bool,
+  ) -> ImageTexture {
+    let mip_level_count = if filter { MIP_LEVEL_COUNT } else { 1 };
     let diffuse_image = image::load_from_memory(bytes).unwrap();
     let diffuse_rgba = diffuse_image.to_rgba8();
     let dimensions = diffuse_rgba.dimensions();
@@ -894,7 +991,7 @@ impl RenderData {
     };
     let diffuse_texture = self.device.create_texture(&wgpu::TextureDescriptor {
       size:            texture_size,
-      mip_level_count: MIP_LEVEL_COUNT,
+      mip_level_count,
       sample_count:    1,
       dimension:       wgpu::TextureDimension::D2,
       format:          wgpu::TextureFormat::Rgba8UnormSrgb,
@@ -919,43 +1016,89 @@ impl RenderData {
       },
       texture_size,
     );
-    let mut mipmap_encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-      label: Some("mipmap_gen"),
+    if mip_level_count > 1 {
+      let mut mipmap_encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("mipmap_gen"),
+      });
+      self.mipmap_gen.generate_mipmaps(
+        &mut mipmap_encoder,
+        &self.device,
+        &diffuse_texture,
+        mip_level_count,
+      );
+      self.queue.submit(Some(mipmap_encoder.finish()));
+    }
+    let texture_view = diffuse_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+      layout: &self.textured_bind_group_layout,
+      entries: &[
+        wgpu::BindGroupEntry {
+          binding:  0,
+          resource: wgpu::BindingResource::TextureView(&texture_view),
+        },
+        wgpu::BindGroupEntry {
+          binding:  1,
+          resource: wgpu::BindingResource::Sampler(match filter {
+            true => &self.linear_texture_sampler,
+            false => &self.nearest_texture_sampler,
+          }),
+        },
+      ],
+      label: None,
     });
-    self.mipmap_gen.generate_mipmaps(
-      &mut mipmap_encoder,
-      &self.device,
-      &diffuse_texture,
-      MIP_LEVEL_COUNT,
-    );
-    self.queue.submit(Some(mipmap_encoder.finish()));
-    let view = diffuse_texture.create_view(&wgpu::TextureViewDescriptor::default());
-    (diffuse_texture, view)
+    ImageTexture {
+      texture: diffuse_texture,
+      texture_view,
+      bind_group,
+    }
   }
 
-  // pub fn flush_data_texture(&self, queue: &wgpu::Queue) {
-  //   let (row_count, bytes) = self.main_data.get_write_info();
-  //   if row_count == 0 {
-  //     return;
-  //   }
-  //   queue.write_texture(
-  //     wgpu::ImageCopyTexture {
-  //       texture:   &self.main_data_texture,
-  //       mip_level: 0,
-  //       origin:    wgpu::Origin3d::ZERO,
-  //       aspect:    wgpu::TextureAspect::All,
-  //     },
-  //     bytes,
-  //     wgpu::ImageDataLayout {
-  //       offset:         0,
-  //       bytes_per_row:  Some(4 * DATA_TEXTURE_SIZE as u32),
-  //       rows_per_image: Some(row_count),
-  //     },
-  //     wgpu::Extent3d {
-  //       width:                 DATA_TEXTURE_SIZE as u32,
-  //       height:                row_count,
-  //       depth_or_array_layers: 1,
-  //     },
-  //   );
-  // }
+  pub fn new_data_texture(&self) -> DataTexture {
+    let data_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+      size:            wgpu::Extent3d {
+        width:                 DATA_TEXTURE_SIZE as u32,
+        height:                DATA_TEXTURE_SIZE as u32,
+        depth_or_array_layers: 1,
+      },
+      mip_level_count: 1,
+      sample_count:    1,
+      dimension:       wgpu::TextureDimension::D2,
+      format:          wgpu::TextureFormat::R32Uint,
+      usage:           wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+      label:           Some("data_texture"),
+      view_formats:    &[],
+    });
+    let data_texture_view = data_texture.create_view(&wgpu::TextureViewDescriptor {
+      format: Some(wgpu::TextureFormat::R32Uint),
+      ..Default::default()
+    });
+    let data_texture_bind_group_layout =
+      self.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        entries: &[wgpu::BindGroupLayoutEntry {
+          binding:    0,
+          visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+          ty:         wgpu::BindingType::Texture {
+            multisampled:   false,
+            view_dimension: wgpu::TextureViewDimension::D2,
+            sample_type:    wgpu::TextureSampleType::Uint,
+          },
+          count:      None,
+        }],
+        label:   Some("data_texture_bind_group_layout"),
+      });
+    let data_texture_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+      layout:  &data_texture_bind_group_layout,
+      entries: &[wgpu::BindGroupEntry {
+        binding:  0,
+        resource: wgpu::BindingResource::TextureView(&data_texture_view),
+      }],
+      label:   Some("data_texture_bind_group"),
+    });
+    DataTexture {
+      texture: data_texture,
+      texture_view: data_texture_view,
+      bind_group: data_texture_bind_group,
+      cpu_buffer: GpuDataTextureBuffer::new(),
+    }
+  }
 }

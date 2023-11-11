@@ -71,6 +71,7 @@ impl PeterEngineApp for TestApp {
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     _encoder: &mut wgpu::CommandEncoder,
+    _screen_size: (u32, u32),
   ) -> Vec<wgpu::CommandBuffer> {
     resources.trianges.clear();
     resources.trianges.vertex_buffer.extend_from_slice(&[
