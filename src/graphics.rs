@@ -526,10 +526,9 @@ pub struct UniformsBuffer<U> {
 impl<U: Default> UniformsBuffer<U> {
   pub fn new(label: &str, device: &wgpu::Device) -> Self {
     let uniforms = U::default();
-    let slice = unsafe { ref_as_u8_slice(&uniforms) };
     let uniforms_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
       label:    Some(label),
-      contents: slice,
+      contents: unsafe { ref_as_u8_slice(&uniforms) },
       usage:    wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
