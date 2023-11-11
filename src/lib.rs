@@ -4,10 +4,8 @@ use std::sync::{Arc, Mutex};
 pub use eframe;
 use eframe::egui_wgpu::{Callback, CallbackResources, CallbackTrait};
 pub use eframe::{egui, wgpu};
-pub use enum_map;
-pub use anymap;
-pub use image;
 use graphics::RenderData;
+pub use image;
 pub use nalgebra;
 
 pub mod graphics;
@@ -17,11 +15,15 @@ pub mod web;
 
 pub trait PeterEngineApp: Send + 'static {
   const WINDOW_TITLE: &'static str;
-  const SHADER_SOURCE: &'static str;
 
   type RenderResources: Send + Sync + 'static;
 
-  fn init(&mut self, cc: &eframe::CreationContext, render_data: &mut RenderData) -> Self::RenderResources;
+  fn get_shader_source() -> String;
+  fn init(
+    &mut self,
+    cc: &eframe::CreationContext,
+    render_data: &mut RenderData,
+  ) -> Self::RenderResources;
   fn update(&mut self, egui_ctx: &egui::Context, frame: &mut eframe::Frame, dt: f32);
   fn central_panel_input(
     &mut self,
@@ -38,12 +40,12 @@ pub trait PeterEngineApp: Send + 'static {
     queue: &wgpu::Queue,
     encoder: &mut wgpu::CommandEncoder,
   ) -> Vec<wgpu::CommandBuffer>;
-  fn paint(
+  fn paint<'rp>(
     &mut self,
-    render_data: &RenderData,
-    resources: &Self::RenderResources,
+    render_data: &'rp RenderData,
+    resources: &'rp Self::RenderResources,
     info: eframe::epaint::PaintCallbackInfo,
-    render_pass: &mut wgpu::RenderPass,
+    render_pass: &mut wgpu::RenderPass<'rp>,
   );
 }
 
@@ -55,7 +57,8 @@ impl<GameState: PeterEngineApp> EframeApp<GameState> {
   pub fn new(mut game_state: GameState, cc: &eframe::CreationContext) -> Self {
     let wgpu_render_state = cc.wgpu_render_state.as_ref().unwrap();
     let mut w = wgpu_render_state.renderer.write();
-    let mut rd = RenderData::new(cc, GameState::SHADER_SOURCE);
+    let shader_source = GameState::get_shader_source();
+    let mut rd = RenderData::new(cc, &shader_source);
     let resources = game_state.init(cc, &mut rd);
     let locked_state = Arc::new(Mutex::new(game_state));
     w.callback_resources.insert((rd, resources));
@@ -76,18 +79,20 @@ impl<GameState: PeterEngineApp> CallbackTrait for PaintCallback<GameState> {
     encoder: &mut wgpu::CommandEncoder,
     callback_resources: &mut CallbackResources,
   ) -> Vec<wgpu::CommandBuffer> {
-    let (render_data, resources) = callback_resources.get_mut::<(RenderData, GameState::RenderResources)>().unwrap();
+    let (render_data, resources) =
+      callback_resources.get_mut::<(RenderData, GameState::RenderResources)>().unwrap();
     render_data.pixel_perfect_size = self.pixel_perfect_size;
     self.locked_state.lock().unwrap().prepare(render_data, resources, device, queue, encoder)
   }
 
   fn paint<'rp>(
-    &'rp self,
+    &self,
     info: eframe::epaint::PaintCallbackInfo,
     render_pass: &mut wgpu::RenderPass<'rp>,
     callback_resources: &'rp CallbackResources,
   ) {
-    let (render_data, resources) = callback_resources.get::<(RenderData, GameState::RenderResources)>().unwrap();
+    let (render_data, resources) =
+      callback_resources.get::<(RenderData, GameState::RenderResources)>().unwrap();
     self.locked_state.lock().unwrap().paint(render_data, resources, info, render_pass)
   }
 }

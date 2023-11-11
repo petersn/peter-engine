@@ -1,60 +1,56 @@
-use enum_map::Enum;
-use peter_engine::{eframe, egui, graphics::RenderData, wgpu, PeterEngineApp, launch};
-use wgpu::util::make_spirv_raw;
-
-struct TestApp {}
-
-// #[derive(Enum)]
-// enum Textures {
-//   A,
-// }
-
-// impl ResourceKey for Textures {
-//   type Output = wgpu::TextureView;
-
-//   fn load<App: PeterEngineApp>(self, rd: &mut RenderData<App>) -> Self::Output {
-//     match self {
-//       Self::A => rd.load_texture(&[
-//         0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
-//         0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x03, 0x00, 0x00, 0x00, 0x66, 0xBC, 0x3A,
-//         0x25, 0x00, 0x00, 0x00, 0x03, 0x50, 0x4C, 0x54, 0x45, 0xB5, 0xD0, 0xD0, 0x63, 0x04, 0x16, 0xEA,
-//         0x00, 0x00, 0x00, 0x1F, 0x49, 0x44, 0x41, 0x54, 0x68, 0x81, 0xED, 0xC1, 0x01, 0x0D, 0x00, 0x00,
-//         0x00, 0xC2, 0xA0, 0xF7, 0x4F, 0x6D, 0x0E, 0x37, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-//         0x00, 0xBE, 0x0D, 0x21, 0x00, 0x00, 0x01, 0x9A, 0x60, 0xE1, 0xD5, 0x00, 0x00, 0x00, 0x00, 0x49,
-//         0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
-//       ]).1,
-//     }
-//   }
-// }
+use peter_engine::{
+  eframe, egui,
+  graphics::{PipelineDesc, RenderData, Vertex, SHADER_PRELUDE, BindingDesc, GeometryBuffer},
+  launch, wgpu, PeterEngineApp,
+};
 
 struct AppResources {
   main_pipeline: wgpu::RenderPipeline,
+  trianges: GeometryBuffer,
 }
+
+struct TestApp {}
 
 impl PeterEngineApp for TestApp {
   const WINDOW_TITLE: &'static str = "Test App";
-  const SHADER_SOURCE: &'static str = r#"
-
-  "#;
 
   type RenderResources = AppResources;
 
-  fn init(&mut self, cc: &eframe::CreationContext, rd: &mut RenderData) -> Self::RenderResources {
-    let no_blending: wgpu::ColorTargetState = cc.wgpu_render_state.as_ref().unwrap().target_format.into();
-    let mut alpha_blending = no_blending.clone();
-    alpha_blending.blend = Some(wgpu::BlendState::ALPHA_BLENDING);
+  fn get_shader_source() -> String {
+    format!(
+      "{}\n{}",
+      SHADER_PRELUDE,
+      r#"
+        @vertex
+        fn vertex_shader(
+          model: VertexInput,
+        ) -> VertexOutput {
+          var out: VertexOutput;
+          out.color = model.color;
+          out.uv = model.uv;
+          out.clip_position = uniforms.transform_pvm * vec4<f32>(model.position, 1.0);
+          return out;
+        }
+        @fragment
+        fn solid_fragment_shader(in: VertexOutput) -> @location(0) vec4<f32> {
+          return in.color;
+        }
+      "#,
+    )
+  }
 
-    let main_pipeline = peter_engine::make_pipeline!(
-      render_data = rd;
-      layout = rd.pipeline_layout;
-      vertex_buffers = [];
-      vertex = "foo";
-      fragment = "bar";
-      topology = wgpu::PrimitiveTopology::TriangleList;
-      blend_mode = no_blending;
-    );
+  fn init(&mut self, _cc: &eframe::CreationContext, rd: &mut RenderData) -> Self::RenderResources {
+    let main_pipeline = rd.create_pipeline(PipelineDesc {
+      layout: vec![vec![BindingDesc::Uniforms]],
+      vertex_buffers: vec![Vertex::desc()],
+      vertex_shader: "vertex_shader",
+      fragment_shader: "solid_fragment_shader",
+      topology: wgpu::PrimitiveTopology::TriangleList,
+      ..Default::default()
+    });
     AppResources {
       main_pipeline,
+      trianges: GeometryBuffer::new("triangles"),
     }
   }
 
@@ -71,21 +67,46 @@ impl PeterEngineApp for TestApp {
   fn prepare(
     &mut self,
     rd: &mut RenderData,
-    _resources: &mut Self::RenderResources,
-    _device: &wgpu::Device,
-    _queue: &wgpu::Queue,
+    resources: &mut Self::RenderResources,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
     encoder: &mut wgpu::CommandEncoder,
   ) -> Vec<wgpu::CommandBuffer> {
+    resources.trianges.clear();
+    resources.trianges.vertex_buffer.push(Vertex {
+      position: [0.0, 0.0, 0.0],
+      color: [1.0, 0.0, 0.0, 1.0],
+      uv: [0.0, 0.0],
+    });
+    resources.trianges.vertex_buffer.push(Vertex {
+      position: [1.0, 0.0, 0.0],
+      color: [0.0, 1.0, 0.0, 1.0],
+      uv: [1.0, 0.0],
+    });
+    resources.trianges.vertex_buffer.push(Vertex {
+      position: [0.0, 1.0, 0.0],
+      color: [0.0, 0.0, 1.0, 1.0],
+      uv: [0.0, 1.0],
+    });
+    resources.trianges.index_buffer.push(0);
+    resources.trianges.index_buffer.push(1);
+    resources.trianges.index_buffer.push(2);
+    resources.trianges.update(device, queue);
     Vec::new()
   }
 
-  fn paint(
+  fn paint<'rp>(
     &mut self,
-    rd: &RenderData,
-    _resources: &Self::RenderResources,
-    info: eframe::epaint::PaintCallbackInfo,
-    render_pass: &mut wgpu::RenderPass,
+    rd: &'rp RenderData,
+    resources: &'rp Self::RenderResources,
+    _info: eframe::epaint::PaintCallbackInfo,
+    render_pass: &mut wgpu::RenderPass<'rp>,
   ) {
+    render_pass.set_pipeline(&resources.main_pipeline);
+    render_pass.set_bind_group(0, &rd.main_uniforms.bind_group, &[]);
+    render_pass.set_vertex_buffer(0, resources.trianges.vertex_buffer.get_slice().unwrap());
+    render_pass.set_index_buffer(resources.trianges.index_buffer.get_slice().unwrap(), wgpu::IndexFormat::Uint32);
+    render_pass.draw_indexed(0..resources.trianges.index_buffer.len() as u32, 0, 0..1);
   }
 }
 

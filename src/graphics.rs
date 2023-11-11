@@ -1,10 +1,8 @@
 use std::sync::Arc;
 
-use anymap::AnyMap;
-use enum_map::{EnumArray, EnumMap};
 use nalgebra::{Matrix4, Point3, UnitQuaternion, Vector3};
 use wgpu::util::DeviceExt;
-use wgpu::BufferSlice;
+use wgpu::{BufferSlice, BindGroupLayoutEntry};
 
 use crate::mipmapping::MipMapGen;
 use crate::PeterEngineApp;
@@ -595,69 +593,66 @@ pub static SHADER_PRELUDE: &str = include_str!("shaders.wgsl");
 //   fn load<App: PeterEngineApp>(self, rd: &mut RenderData<App>) -> Self::Output;
 // }
 
-#[macro_export]
-macro_rules! make_pipeline {
-  (
-    render_data = $rd:expr;
-    layout = $layout:expr;
-    vertex_buffers = $vertex_buffers:expr;
-    vertex = $vertex:expr;
-    fragment = $fragment:expr;
-    topology = $topology:expr;
-    blend_mode = $blend_mode:expr;
-    $( depth_compare = $depth_compare:expr; )?
-    $( depth_write = $depth_write:expr; )?
-  ) => {{
-    let rd = $rd;
-    #[allow(unused_mut, unused_assignments)]
-    let mut depth_compare_enabled = true;
-    #[allow(unused_mut, unused_assignments)]
-    let mut depth_write_enabled = true;
-    $( depth_compare_enabled = $depth_compare; )?
-    $( depth_write_enabled = $depth_write; )?
-    rd.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-      label:         None,
-      layout:        Some(&$layout),
-      vertex:        wgpu::VertexState {
-        module:      &rd.shader,
-        entry_point: $vertex,
-        buffers:     &$vertex_buffers,
-      },
-      fragment:      Some(wgpu::FragmentState {
-        module:      &rd.shader,
-        entry_point: $fragment,
-        targets:     &[Some($blend_mode.clone())],
-      }),
-      primitive:     wgpu::PrimitiveState {
-        topology:           $topology,
-        strip_index_format: None,
-        front_face:         wgpu::FrontFace::Ccw,
-        cull_mode:          None,
-        polygon_mode:       wgpu::PolygonMode::Fill,
-        unclipped_depth:    false,
-        conservative:       false,
-      },
-      depth_stencil: Some(wgpu::DepthStencilState {
-        format:              wgpu::TextureFormat::Depth32Float,
-        depth_write_enabled,
-        depth_compare:       match depth_compare_enabled {
-          true => wgpu::CompareFunction::Less,
-          false => wgpu::CompareFunction::Always,
-        },
-        stencil:             wgpu::StencilState::default(),
-        bias:                wgpu::DepthBiasState::default(),
-      }),
-      multisample:   wgpu::MultisampleState {
-        count:                     MSAA_COUNT,
-        mask:                      !0,
-        alpha_to_coverage_enabled: false,
-      },
-      multiview:     None,
-    })
-  }};
+pub enum BindingDesc {
+  Uniforms,
+  Simple {
+    visibility: wgpu::ShaderStages,
+    ty:         wgpu::BufferBindingType,
+  },
+  Custom(wgpu::BindGroupLayoutEntry),
 }
 
+pub struct PipelineDesc {
+  pub layout:          Vec<Vec<BindingDesc>>,
+  pub vertex_buffers:  Vec<wgpu::VertexBufferLayout<'static>>,
+  pub vertex_shader:   &'static str,
+  pub fragment_shader: &'static str,
+  pub topology:        wgpu::PrimitiveTopology,
+  pub do_blend:        bool,
+  pub depth_compare:   bool,
+  pub depth_write:     bool,
+}
+
+impl Default for PipelineDesc {
+  fn default() -> Self {
+    Self {
+      layout:          Vec::new(),
+      vertex_buffers:  Vec::new(),
+      vertex_shader:   "vertex shader not specified!",
+      fragment_shader: "fragment shader not specified!",
+      topology:        wgpu::PrimitiveTopology::TriangleList,
+      do_blend:        false,
+      depth_compare:   true,
+      depth_write:     true,
+    }
+  }
+}
+
+// #[macro_export]
+// macro_rules! make_pipeline {
+//   (
+//     render_data = $rd:expr;
+//     layout = $layout:expr;
+//     vertex_buffers = $vertex_buffers:expr;
+//     vertex = $vertex:expr;
+//     fragment = $fragment:expr;
+//     topology = $topology:expr;
+//     blend_mode = $blend_mode:expr;
+//     $( depth_compare = $depth_compare:expr; )?
+//     $( depth_write = $depth_write:expr; )?
+//   ) => {{
+//     let rd = $rd;
+//     #[allow(unused_mut, unused_assignments)]
+//     let mut depth_compare_enabled = true;
+//     #[allow(unused_mut, unused_assignments)]
+//     let mut depth_write_enabled = true;
+//     $( depth_compare_enabled = $depth_compare; )?
+//     $( depth_write_enabled = $depth_write; )?
+//   }};
+// }
+
 pub struct RenderData {
+  pub target_format:      wgpu::TextureFormat,
   pub main_uniforms:      UniformsBuffer,
   pub device:             Arc<wgpu::Device>,
   pub queue:              Arc<wgpu::Queue>,
@@ -751,20 +746,16 @@ impl RenderData {
 
     let main_uniforms = UniformsBuffer::new("main_uniforms", &device);
 
-    let default_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-      label:                None,
-      bind_group_layouts:   &[&main_uniforms.bind_group_layout],
-      push_constant_ranges: &[],
-    });
+    // let default_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+    //   label:                None,
+    //   bind_group_layouts:   &[&main_uniforms.bind_group_layout],
+    //   push_constant_ranges: &[],
+    // });
     // let data_texture_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
     //   label:                None,
     //   bind_group_layouts:   &[&main_uniforms.bind_group_layout, &data_texture_bind_group_layout],
     //   push_constant_ranges: &[],
     // });
-
-    let no_blending: wgpu::ColorTargetState = wgpu_render_state.target_format.into();
-    let mut alpha_blending = no_blending.clone();
-    alpha_blending.blend = Some(wgpu::BlendState::ALPHA_BLENDING);
 
     let mipmap_gen = MipMapGen::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
@@ -779,6 +770,7 @@ impl RenderData {
     // });
 
     Self {
+      target_format: wgpu_render_state.target_format,
       main_uniforms,
       device,
       queue,
@@ -796,6 +788,101 @@ impl RenderData {
     }
   }
 
+  pub fn create_pipeline(&self, desc: PipelineDesc) -> wgpu::RenderPipeline {
+    let mut target: wgpu::ColorTargetState = self.target_format.into();
+    if desc.do_blend {
+      target.blend = Some(wgpu::BlendState::ALPHA_BLENDING);
+    }
+    let mut bind_group_layouts = Vec::new();
+    for bind_group_desc in desc.layout {
+      let mut bindings = Vec::new();
+      for (binding_index, binding_desc) in bind_group_desc.iter().enumerate() {
+        bindings.push(match binding_desc {
+          BindingDesc::Uniforms => wgpu::BindGroupLayoutEntry {
+            binding:    binding_index as u32,
+            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            ty:         wgpu::BindingType::Buffer {
+              ty:                 wgpu::BufferBindingType::Uniform,
+              has_dynamic_offset: false,
+              min_binding_size:   None,
+            },
+            count:      None,
+          },
+          BindingDesc::Simple {
+            visibility,
+            ty,
+          } => wgpu::BindGroupLayoutEntry {
+            binding:    binding_index as u32,
+            visibility: *visibility,
+            ty:         wgpu::BindingType::Buffer {
+              ty:                 *ty,
+              has_dynamic_offset: false,
+              min_binding_size:   None,
+            },
+            count:      None,
+          },
+          BindingDesc::Custom(bind_group_layout_entry) => bind_group_layout_entry.clone(),
+        });
+      }
+      bind_group_layouts.push(
+        self
+          .device
+          .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label:   None,
+            entries: &bindings,
+          }),
+      );
+    }
+    let binding_group_layouts_by_ref = bind_group_layouts
+      .iter()
+      .map(|bgl| bgl as &wgpu::BindGroupLayout)
+      .collect::<Vec<_>>();
+    let pipeline_layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+      label:                None,
+      bind_group_layouts:   &binding_group_layouts_by_ref,
+      push_constant_ranges: &[],
+    });
+    self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+      label:         None,
+      layout:        Some(&pipeline_layout),
+      vertex:        wgpu::VertexState {
+        module:      &self.shader,
+        entry_point: desc.vertex_shader,
+        buffers:     &desc.vertex_buffers,
+      },
+      fragment:      Some(wgpu::FragmentState {
+        module:      &self.shader,
+        entry_point: desc.fragment_shader,
+        targets:     &[Some(target)],
+      }),
+      primitive:     wgpu::PrimitiveState {
+        topology:           desc.topology,
+        strip_index_format: None,
+        front_face:         wgpu::FrontFace::Ccw,
+        cull_mode:          Some(wgpu::Face::Back),
+        polygon_mode:       wgpu::PolygonMode::Fill,
+        unclipped_depth:    false,
+        conservative:       false,
+      },
+      depth_stencil: Some(wgpu::DepthStencilState {
+        format:              wgpu::TextureFormat::Depth32Float,
+        depth_write_enabled: desc.depth_write,
+        depth_compare:       match desc.depth_compare {
+          true => wgpu::CompareFunction::Less,
+          false => wgpu::CompareFunction::Always,
+        },
+        stencil:             wgpu::StencilState::default(),
+        bias:                wgpu::DepthBiasState::default(),
+      }),
+      multisample:   wgpu::MultisampleState {
+        count:                     MSAA_COUNT,
+        mask:                      !0,
+        alpha_to_coverage_enabled: false,
+      },
+      multiview:     None,
+    })
+  }
+
   pub fn load_texture(&self, bytes: &[u8]) -> (wgpu::Texture, wgpu::TextureView) {
     let diffuse_image = image::load_from_memory(bytes).unwrap();
     let diffuse_rgba = diffuse_image.to_rgba8();
@@ -806,16 +893,16 @@ impl RenderData {
       depth_or_array_layers: 1,
     };
     let diffuse_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-      size: texture_size,
+      size:            texture_size,
       mip_level_count: MIP_LEVEL_COUNT,
-      sample_count: 1,
-      dimension: wgpu::TextureDimension::D2,
-      format: wgpu::TextureFormat::Rgba8UnormSrgb,
-      usage: wgpu::TextureUsages::TEXTURE_BINDING
+      sample_count:    1,
+      dimension:       wgpu::TextureDimension::D2,
+      format:          wgpu::TextureFormat::Rgba8UnormSrgb,
+      usage:           wgpu::TextureUsages::TEXTURE_BINDING
         | wgpu::TextureUsages::COPY_DST
         | wgpu::TextureUsages::RENDER_ATTACHMENT,
-      label: Some("font_texture"),
-      view_formats: &[],
+      label:           Some("font_texture"),
+      view_formats:    &[],
     });
     self.queue.write_texture(
       wgpu::ImageCopyTexture {

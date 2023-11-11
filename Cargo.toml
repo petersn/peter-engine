@@ -7,8 +7,6 @@ license = "CC0-1.0"
 
 [dependencies]
 nalgebra = "0.32.3"
-enum-map = "2.7.1"
-anymap = "0.12.1"
 image = "0.24.7"
 eframe = { version = "0.23.0", default-features = false, features = [
     "default_fonts",
