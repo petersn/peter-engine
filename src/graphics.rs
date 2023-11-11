@@ -7,7 +7,7 @@ use wgpu::{BindGroupLayoutEntry, BufferSlice};
 use crate::mipmapping::MipMapGen;
 use crate::PeterEngineApp;
 
-const DATA_TEXTURE_SIZE: usize = 2048;
+pub const DATA_TEXTURE_SIZE: usize = 2048;
 pub const MSAA_COUNT: u32 = 1;
 pub const MIP_LEVEL_COUNT: u32 = 4;
 
@@ -174,7 +174,7 @@ impl Projection {
     self.set_projection_matrix(projection_matrix);
   }
 
-  pub fn update_uniforms(&mut self, uniforms: &mut Uniforms) {
+  pub fn update_uniforms(&mut self, uniforms: &mut CameraUniforms) {
     uniforms.transform_m = self.model_matrix.into();
     uniforms.transform_vm = self.derived_vm.into();
     uniforms.transform_pvm = self.derived_pvm.into();
@@ -216,7 +216,7 @@ impl Vertex {
 
 #[repr(C, align(16))]
 #[derive(Debug, Clone)]
-pub struct Uniforms {
+pub struct CameraUniforms {
   pub transform_m:       [[f32; 4]; 4],
   pub transform_vm:      [[f32; 4]; 4],
   pub transform_pvm:     [[f32; 4]; 4],
@@ -225,8 +225,8 @@ pub struct Uniforms {
   pub far:               f32,
 }
 
-impl Uniforms {
-  pub fn new() -> Self {
+impl Default for CameraUniforms {
+  fn default() -> Self {
     Self {
       transform_m:       Matrix4::identity().into(),
       transform_vm:      Matrix4::identity().into(),
@@ -516,19 +516,20 @@ impl CameraSettings {
   }
 }
 
-pub struct UniformsBuffer {
-  pub uniforms:          Uniforms,
+pub struct UniformsBuffer<U> {
+  pub uniforms:          U,
   pub uniforms_buffer:   wgpu::Buffer,
   pub bind_group_layout: wgpu::BindGroupLayout,
   pub bind_group:        wgpu::BindGroup,
 }
 
-impl UniformsBuffer {
+impl<U: Default> UniformsBuffer<U> {
   pub fn new(label: &str, device: &wgpu::Device) -> Self {
-    let uniforms = Uniforms::new();
+    let uniforms = U::default();
+    let slice = unsafe { ref_as_u8_slice(&uniforms) };
     let uniforms_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
       label:    Some(label),
-      contents: unsafe { ref_as_u8_slice(&uniforms) },
+      contents: slice,
       usage:    wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -727,7 +728,7 @@ impl Default for PipelineDesc {
 
 pub struct RenderData {
   pub target_format:              wgpu::TextureFormat,
-  pub main_uniforms:              UniformsBuffer,
+  pub main_uniforms:              UniformsBuffer<CameraUniforms>,
   pub device:                     Arc<wgpu::Device>,
   pub queue:                      Arc<wgpu::Queue>,
   pub shader:                     wgpu::ShaderModule,

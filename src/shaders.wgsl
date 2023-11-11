@@ -1,4 +1,4 @@
-struct Uniforms {
+struct CameraUniforms {
   transform_m:       mat4x4<f32>,
   transform_vm:      mat4x4<f32>,
   transform_pvm:     mat4x4<f32>,
@@ -7,7 +7,7 @@ struct Uniforms {
   far:               f32,
 }
 
-@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+@group(0) @binding(0) var<uniform> camera_uniforms: CameraUniforms;
 
 struct VertexInput {
   @location(0) position: vec3<f32>,

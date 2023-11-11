@@ -13,6 +13,21 @@ pub mod mipmapping;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub fn log(s: &str) {
+  println!("{}", s);
+}
+
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+extern "C" {
+  #[wasm_bindgen(js_namespace = console)]
+  pub fn log(s: &str);
+}
+
 pub trait PeterEngineApp: Send + 'static {
   const WINDOW_TITLE: &'static str;
 

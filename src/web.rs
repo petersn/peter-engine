@@ -1,12 +1,6 @@
 use eframe::WebRunner;
 use wasm_bindgen::prelude::*;
 
-#[wasm_bindgen]
-extern "C" {
-  #[wasm_bindgen(js_namespace = console)]
-  pub fn log(s: &str);
-}
-
 #[derive(Clone)]
 #[wasm_bindgen]
 pub struct WebHandle {
@@ -23,7 +17,7 @@ pub fn clear_loading_message() {
     .unwrap()
     .set_attribute("style", "display: none")
     .unwrap();
-  log("Launching app from WASM");
+  crate::log("Launching app from WASM");
 }
 
 #[wasm_bindgen]
