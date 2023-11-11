@@ -1,12 +1,12 @@
 use peter_engine::{
   eframe, egui,
-  graphics::{PipelineDesc, RenderData, Vertex, SHADER_PRELUDE, BindingDesc, GeometryBuffer},
+  graphics::{BindingDesc, GeometryBuffer, PipelineDesc, RenderData, Vertex, SHADER_PRELUDE},
   launch, wgpu, PeterEngineApp,
 };
 
 struct AppResources {
   main_pipeline: wgpu::RenderPipeline,
-  trianges: GeometryBuffer,
+  trianges:      GeometryBuffer,
 }
 
 struct TestApp {}
@@ -77,18 +77,18 @@ impl PeterEngineApp for TestApp {
     resources.trianges.vertex_buffer.extend_from_slice(&[
       Vertex {
         position: [0.0, 0.0, 0.0],
-        color: [1.0, 0.0, 0.0, 1.0],
-        uv: [0.0, 0.0],
+        color:    [1.0, 0.0, 0.0, 1.0],
+        uv:       [0.0, 0.0],
       },
       Vertex {
         position: [1.0, 0.0, 0.0],
-        color: [0.0, 1.0, 0.0, 1.0],
-        uv: [0.0, 0.0],
+        color:    [0.0, 1.0, 0.0, 1.0],
+        uv:       [0.0, 0.0],
       },
       Vertex {
         position: [0.0, 1.0, 0.0],
-        color: [0.0, 0.0, 1.0, 1.0],
-        uv: [0.0, 0.0],
+        color:    [0.0, 0.0, 1.0, 1.0],
+        uv:       [0.0, 0.0],
       },
     ]);
     resources.trianges.index_buffer.extend_from_slice(&[0, 1, 2]);
@@ -106,7 +106,10 @@ impl PeterEngineApp for TestApp {
     render_pass.set_pipeline(&resources.main_pipeline);
     render_pass.set_bind_group(0, &rd.main_uniforms.bind_group, &[]);
     render_pass.set_vertex_buffer(0, resources.trianges.vertex_buffer.get_slice().unwrap());
-    render_pass.set_index_buffer(resources.trianges.index_buffer.get_slice().unwrap(), wgpu::IndexFormat::Uint32);
+    render_pass.set_index_buffer(
+      resources.trianges.index_buffer.get_slice().unwrap(),
+      wgpu::IndexFormat::Uint32,
+    );
     render_pass.draw_indexed(0..resources.trianges.index_buffer.len() as u32, 0, 0..1);
   }
 }

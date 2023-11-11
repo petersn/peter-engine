@@ -83,7 +83,14 @@ impl<GameState: PeterEngineApp> CallbackTrait for PaintCallback<GameState> {
     let (render_data, resources) =
       callback_resources.get_mut::<(RenderData, GameState::RenderResources)>().unwrap();
     render_data.pixel_perfect_size = self.pixel_perfect_size;
-    self.locked_state.lock().unwrap().prepare(render_data, resources, device, queue, encoder, self.pixel_perfect_size)
+    self.locked_state.lock().unwrap().prepare(
+      render_data,
+      resources,
+      device,
+      queue,
+      encoder,
+      self.pixel_perfect_size,
+    )
   }
 
   fn paint<'rp>(

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use nalgebra::{Matrix4, Point3, UnitQuaternion, Vector3};
 use wgpu::util::DeviceExt;
-use wgpu::{BufferSlice, BindGroupLayoutEntry};
+use wgpu::{BindGroupLayoutEntry, BufferSlice};
 
 use crate::mipmapping::MipMapGen;
 use crate::PeterEngineApp;
@@ -726,20 +726,20 @@ impl Default for PipelineDesc {
 // }
 
 pub struct RenderData {
-  pub target_format:      wgpu::TextureFormat,
-  pub main_uniforms:      UniformsBuffer,
-  pub device:             Arc<wgpu::Device>,
-  pub queue:              Arc<wgpu::Queue>,
-  pub shader:             wgpu::ShaderModule,
-  pub linear_texture_sampler:    wgpu::Sampler,
-  pub nearest_texture_sampler:   wgpu::Sampler,
+  pub target_format:              wgpu::TextureFormat,
+  pub main_uniforms:              UniformsBuffer,
+  pub device:                     Arc<wgpu::Device>,
+  pub queue:                      Arc<wgpu::Queue>,
+  pub shader:                     wgpu::ShaderModule,
+  pub linear_texture_sampler:     wgpu::Sampler,
+  pub nearest_texture_sampler:    wgpu::Sampler,
   pub textured_bind_group_layout: wgpu::BindGroupLayout,
   // pub main_data:               GpuDataTextureBuffer,
   // pub main_data_texture:       wgpu::Texture,
   // pub main_data_texture_view:  wgpu::TextureView,
   // pub data_texture_bind_group: wgpu::BindGroup,
-  pub mipmap_gen:         MipMapGen,
-  pub pixel_perfect_size: (u32, u32),
+  pub mipmap_gen:                 MipMapGen,
+  pub pixel_perfect_size:         (u32, u32),
   // pub resources:          AnyMap,
   // pub resources:          App::RenderResources,
 }
@@ -782,27 +782,28 @@ impl RenderData {
 
     let linear_texture_sampler = device.create_sampler(&LINEAR_SAMPLER_DESCRIPTOR);
     let nearest_texture_sampler = device.create_sampler(&NEAREST_SAMPLER_DESCRIPTOR);
-    let textured_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-      entries: &[
-        wgpu::BindGroupLayoutEntry {
-          binding:    0,
-          visibility: wgpu::ShaderStages::FRAGMENT,
-          ty:         wgpu::BindingType::Texture {
-            multisampled:   false,
-            view_dimension: wgpu::TextureViewDimension::D2,
-            sample_type:    wgpu::TextureSampleType::Float { filterable: true },
+    let textured_bind_group_layout =
+      device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        entries: &[
+          wgpu::BindGroupLayoutEntry {
+            binding:    0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty:         wgpu::BindingType::Texture {
+              multisampled:   false,
+              view_dimension: wgpu::TextureViewDimension::D2,
+              sample_type:    wgpu::TextureSampleType::Float { filterable: true },
+            },
+            count:      None,
           },
-          count:      None,
-        },
-        wgpu::BindGroupLayoutEntry {
-          binding:    1,
-          visibility: wgpu::ShaderStages::FRAGMENT,
-          ty:         wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-          count:      None,
-        },
-      ],
-      label:   Some("textured_bind_group_layout"),
-    });
+          wgpu::BindGroupLayoutEntry {
+            binding:    1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty:         wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count:      None,
+          },
+        ],
+        label:   Some("textured_bind_group_layout"),
+      });
 
     let main_uniforms = UniformsBuffer::new("main_uniforms", &device);
 
@@ -890,7 +891,9 @@ impl RenderData {
             ty:         wgpu::BindingType::Texture {
               multisampled:   false,
               view_dimension: wgpu::TextureViewDimension::D2,
-              sample_type:    wgpu::TextureSampleType::Float { filterable: *filterable },
+              sample_type:    wgpu::TextureSampleType::Float {
+                filterable: *filterable,
+              },
             },
             count:      None,
           },
@@ -916,19 +919,15 @@ impl RenderData {
           BindingDesc::Custom(bind_group_layout_entry) => bind_group_layout_entry.clone(),
         });
       }
-      bind_group_layouts.push(
-        self
-          .device
-          .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label:   None,
-            entries: &bindings,
-          }),
-      );
+      bind_group_layouts.push(self.device.create_bind_group_layout(
+        &wgpu::BindGroupLayoutDescriptor {
+          label:   None,
+          entries: &bindings,
+        },
+      ));
     }
-    let binding_group_layouts_by_ref = bind_group_layouts
-      .iter()
-      .map(|bgl| bgl as &wgpu::BindGroupLayout)
-      .collect::<Vec<_>>();
+    let binding_group_layouts_by_ref =
+      bind_group_layouts.iter().map(|bgl| bgl as &wgpu::BindGroupLayout).collect::<Vec<_>>();
     let pipeline_layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
       label:                None,
       bind_group_layouts:   &binding_group_layouts_by_ref,
@@ -975,11 +974,7 @@ impl RenderData {
     })
   }
 
-  pub fn load_texture(
-    &self,
-    bytes: &[u8],
-    filter: bool,
-  ) -> ImageTexture {
+  pub fn load_texture(&self, bytes: &[u8], filter: bool) -> ImageTexture {
     let mip_level_count = if filter { MIP_LEVEL_COUNT } else { 1 };
     let diffuse_image = image::load_from_memory(bytes).unwrap();
     let diffuse_rgba = diffuse_image.to_rgba8();
@@ -990,16 +985,16 @@ impl RenderData {
       depth_or_array_layers: 1,
     };
     let diffuse_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-      size:            texture_size,
+      size: texture_size,
       mip_level_count,
-      sample_count:    1,
-      dimension:       wgpu::TextureDimension::D2,
-      format:          wgpu::TextureFormat::Rgba8UnormSrgb,
-      usage:           wgpu::TextureUsages::TEXTURE_BINDING
+      sample_count: 1,
+      dimension: wgpu::TextureDimension::D2,
+      format: wgpu::TextureFormat::Rgba8UnormSrgb,
+      usage: wgpu::TextureUsages::TEXTURE_BINDING
         | wgpu::TextureUsages::COPY_DST
         | wgpu::TextureUsages::RENDER_ATTACHMENT,
-      label:           Some("font_texture"),
-      view_formats:    &[],
+      label: Some("font_texture"),
+      view_formats: &[],
     });
     self.queue.write_texture(
       wgpu::ImageCopyTexture {
@@ -1017,9 +1012,10 @@ impl RenderData {
       texture_size,
     );
     if mip_level_count > 1 {
-      let mut mipmap_encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("mipmap_gen"),
-      });
+      let mut mipmap_encoder =
+        self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+          label: Some("mipmap_gen"),
+        });
       self.mipmap_gen.generate_mipmaps(
         &mut mipmap_encoder,
         &self.device,
@@ -1030,7 +1026,7 @@ impl RenderData {
     }
     let texture_view = diffuse_texture.create_view(&wgpu::TextureViewDescriptor::default());
     let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-      layout: &self.textured_bind_group_layout,
+      layout:  &self.textured_bind_group_layout,
       entries: &[
         wgpu::BindGroupEntry {
           binding:  0,
@@ -1044,7 +1040,7 @@ impl RenderData {
           }),
         },
       ],
-      label: None,
+      label:   None,
     });
     ImageTexture {
       texture: diffuse_texture,
@@ -1095,10 +1091,10 @@ impl RenderData {
       label:   Some("data_texture_bind_group"),
     });
     DataTexture {
-      texture: data_texture,
+      texture:      data_texture,
       texture_view: data_texture_view,
-      bind_group: data_texture_bind_group,
-      cpu_buffer: GpuDataTextureBuffer::new(),
+      bind_group:   data_texture_bind_group,
+      cpu_buffer:   GpuDataTextureBuffer::new(),
     }
   }
 }
