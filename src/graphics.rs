@@ -574,7 +574,7 @@ impl GpuDataTextureBuffer {
   }
 }
 
-static SHADER_PRELUDE: &str = include_str!("shaders.wgsl");
+pub static SHADER_PRELUDE: &str = include_str!("shaders.wgsl");
 
 // struct PipelineDesc {
 //   //layout:
@@ -609,8 +609,8 @@ pub struct RenderData<App: PeterEngineApp + ?Sized> {
   pub _phantom:           std::marker::PhantomData<App>,
 }
 
-unsafe impl<App: PeterEngineApp> Send for RenderData<App> {}
-unsafe impl<App: PeterEngineApp> Sync for RenderData<App> {}
+// unsafe impl<App: PeterEngineApp> Send for RenderData<App> {}
+// unsafe impl<App: PeterEngineApp> Sync for RenderData<App> {}
 
 impl<App: PeterEngineApp> RenderData<App> {
   pub fn load_resources<K: ResourceKey>(&mut self) {
@@ -622,7 +622,17 @@ impl<App: PeterEngineApp> RenderData<App> {
   }
 
   pub fn get_resource<K: ResourceKey>(&self, key: K) -> &K::Output {
-    &self.resources.get::<EnumMap<K, K::Output>>().unwrap()[key]
+    match self.resources.get::<EnumMap<K, K::Output>>() {
+      Some(mapping) => &mapping[key],
+      None => panic!("Resource not loaded: {}", std::any::type_name::<K>()),
+    }
+  }
+
+  pub fn get_resource_mut<K: ResourceKey>(&mut self, key: K) -> &mut K::Output {
+    match self.resources.get_mut::<EnumMap<K, K::Output>>() {
+      Some(mapping) => &mut mapping[key],
+      None => panic!("Resource not loaded: {}", std::any::type_name::<K>()),
+    }
   }
 
   pub fn new(cc: &eframe::CreationContext) -> Self {
@@ -671,10 +681,9 @@ impl<App: PeterEngineApp> RenderData<App> {
     //   label:   Some("data_texture_bind_group"),
     // });
 
-    let shader_source = format!("{}\n{}", SHADER_PRELUDE, App::SHADER_SOURCE);
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
       label:  None,
-      source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(&shader_source)),
+      source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(App::SHADER_SOURCE)),
     });
 
     let main_uniforms = UniformsBuffer::new("main_uniforms", &device);

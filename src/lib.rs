@@ -31,6 +31,8 @@ pub trait PeterEngineApp: Send + 'static {
   fn prepare(
     &mut self,
     render_data: &mut RenderData<Self>,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
     encoder: &mut wgpu::CommandEncoder,
   ) -> Vec<wgpu::CommandBuffer>;
   fn paint(
@@ -41,12 +43,12 @@ pub trait PeterEngineApp: Send + 'static {
   );
 }
 
-struct EframeApp<GameState> {
+pub struct EframeApp<GameState> {
   locked_state: Arc<Mutex<GameState>>,
 }
 
 impl<GameState: PeterEngineApp> EframeApp<GameState> {
-  fn new(mut game_state: GameState, cc: &eframe::CreationContext) -> Self {
+  pub fn new(mut game_state: GameState, cc: &eframe::CreationContext) -> Self {
     let wgpu_render_state = cc.wgpu_render_state.as_ref().unwrap();
     let mut w = wgpu_render_state.renderer.write();
     let mut rd = RenderData::<GameState>::new(cc);
@@ -65,15 +67,15 @@ struct PaintCallback<GameState> {
 impl<GameState: PeterEngineApp> CallbackTrait for PaintCallback<GameState> {
   fn prepare(
     &self,
-    _device: &wgpu::Device,
-    _queue: &wgpu::Queue,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
     encoder: &mut wgpu::CommandEncoder,
     callback_resources: &mut CallbackResources,
   ) -> Vec<wgpu::CommandBuffer> {
     let render_data = callback_resources.get_mut::<RenderData<GameState>>().unwrap();
     render_data.pixel_perfect_size = self.pixel_perfect_size;
     // FIXME: I should maybe assert that the above device and queue are the same as the ones in render_data.
-    self.locked_state.lock().unwrap().prepare(render_data, encoder)
+    self.locked_state.lock().unwrap().prepare(render_data, device, queue, encoder)
   }
 
   fn paint<'rp>(
@@ -128,6 +130,7 @@ impl<GameState: PeterEngineApp> eframe::App for EframeApp<GameState> {
   }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn launch<GameState: PeterEngineApp>(game_state: GameState) -> Result<(), eframe::Error> {
   let mut native_options = eframe::NativeOptions::default();
   native_options.depth_buffer = 32;
