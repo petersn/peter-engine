@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 pub use eframe;
 use eframe::egui_wgpu::{Callback, CallbackResources, CallbackTrait};
 pub use eframe::{egui, wgpu};
+pub use enum_map;
 use graphics::RenderData;
 pub use nalgebra;
 
@@ -23,7 +24,8 @@ pub trait PeterEngineApp: Send + 'static {
     _egui_ctx: &egui::Context,
     _response: egui::Response,
     _allocated_rect: &egui::Rect,
-  ) {}
+  ) {
+  }
   fn prepare(
     &mut self,
     render_data: &mut RenderData<Self>,
@@ -131,6 +133,6 @@ pub fn launch<GameState: PeterEngineApp>(game_state: GameState) -> Result<(), ef
   eframe::run_native(
     GameState::WINDOW_TITLE,
     native_options,
-    Box::new(move |cc| Box::new(EframeApp::new(game_state, cc)))
+    Box::new(move |cc| Box::new(EframeApp::new(game_state, cc))),
   )
 }
