@@ -2,6 +2,8 @@
 name = "peter-engine"
 version = "0.1.0"
 edition = "2021"
+description = "A game engine I (Peter Schmidt-Nielsen) am writing for myself -- I don't recommend you use it"
+license = "CC0-1.0"
 
 [dependencies]
 nalgebra = "0.32.3"
