@@ -39,6 +39,7 @@ pub trait PeterEngineApp: Send + 'static {
     cc: &eframe::CreationContext,
     render_data: &mut RenderData,
   ) -> Self::RenderResources;
+  fn save(&mut self, storage: &mut dyn eframe::Storage);
   fn update(&mut self, egui_ctx: &egui::Context, frame: &mut eframe::Frame, dt: f32);
   fn central_panel_input(
     &mut self,
@@ -121,6 +122,11 @@ impl<GameState: PeterEngineApp> CallbackTrait for PaintCallback<GameState> {
 }
 
 impl<GameState: PeterEngineApp> eframe::App for EframeApp<GameState> {
+  fn save(&mut self, storage: &mut dyn eframe::Storage) {
+    let mut guard = self.locked_state.lock().unwrap();
+    guard.save(storage);
+  }
+
   fn update(&mut self, egui_ctx: &egui::Context, frame: &mut eframe::Frame) {
     let dt = egui_ctx.input(|inp| inp.stable_dt.clamp(0.0, 0.15));
     {
