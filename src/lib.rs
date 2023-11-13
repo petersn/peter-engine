@@ -168,13 +168,18 @@ impl<GameState: PeterEngineApp> eframe::App for EframeApp<GameState> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn launch<GameState: PeterEngineApp>(game_state: GameState) -> Result<(), eframe::Error> {
+pub fn launch<GameState: PeterEngineApp>(
+  make_game_state: impl FnOnce(&eframe::CreationContext) -> GameState + 'static,
+) -> Result<(), eframe::Error> {
   let mut native_options = eframe::NativeOptions::default();
   native_options.depth_buffer = 32;
   native_options.multisampling = crate::graphics::MSAA_COUNT as u16;
   eframe::run_native(
     GameState::WINDOW_TITLE,
     native_options,
-    Box::new(move |cc| Box::new(EframeApp::new(game_state, cc))),
+    Box::new(move |cc| {
+      let game_state = make_game_state(cc);
+      Box::new(EframeApp::new(game_state, cc))
+    }),
   )
 }
