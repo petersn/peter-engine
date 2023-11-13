@@ -40,6 +40,8 @@ pub struct MipMapGen {
 
 impl MipMapGen {
   pub fn new(device: &wgpu::Device, texture_format: wgpu::TextureFormat) -> Self {
+    let mut target: wgpu::ColorTargetState = texture_format.into();
+    target.blend = Some(wgpu::BlendState::ALPHA_BLENDING);
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
       label:  Some("mipmap_gen_shader_module"),
       source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(SHADER_SOURCE)),
@@ -81,7 +83,7 @@ impl MipMapGen {
       fragment:      Some(wgpu::FragmentState {
         module:      &shader,
         entry_point: "mipmap_gen_fragment_shader_main",
-        targets:     &[Some(texture_format.into())],
+        targets:     &[Some(target)],
       }),
       primitive:     wgpu::PrimitiveState {
         topology: wgpu::PrimitiveTopology::TriangleList,
@@ -149,7 +151,7 @@ impl MipMapGen {
           view:           &write_view,
           resolve_target: None,
           ops:            wgpu::Operations {
-            load:  wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+            load:  wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
             store: true,
           },
         })],
