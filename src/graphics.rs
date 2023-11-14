@@ -247,6 +247,8 @@ pub unsafe fn slice_as_u8_slice<T: Sized>(p: &[T]) -> &[u8] {
 }
 
 pub struct ImageTexture {
+  pub size:         (u32, u32),
+  pub raw_rgba:     Vec<u32>,
   pub texture:      wgpu::Texture,
   pub texture_view: wgpu::TextureView,
   pub bind_group:   wgpu::BindGroup,
@@ -1043,7 +1045,13 @@ impl RenderData {
       ],
       label:   None,
     });
+    let mut raw_rgba = vec![0u32; dimensions.0 as usize * dimensions.1 as usize];
+    for (i, pixel) in diffuse_rgba.pixels().enumerate() {
+      raw_rgba[i] = u32::from_le_bytes([pixel[0], pixel[1], pixel[2], pixel[3]]);
+    }
     ImageTexture {
+      size: dimensions,
+      raw_rgba,
       texture: diffuse_texture,
       texture_view,
       bind_group,
