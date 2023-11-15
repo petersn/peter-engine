@@ -704,6 +704,12 @@ impl Default for PipelineDesc {
   }
 }
 
+pub struct PipelinePlusLayouts {
+  pub pipeline: wgpu::RenderPipeline,
+  pub pipeline_layout: wgpu::PipelineLayout,
+  pub bind_group_layouts:  Vec<wgpu::BindGroupLayout>,
+}
+
 // #[macro_export]
 // macro_rules! make_pipeline {
 //   (
@@ -854,7 +860,7 @@ impl RenderData {
     }
   }
 
-  pub fn create_pipeline(&self, desc: PipelineDesc) -> wgpu::RenderPipeline {
+  pub fn create_pipeline(&self, desc: PipelineDesc) -> PipelinePlusLayouts {
     let mut target: wgpu::ColorTargetState = self.target_format.into();
     if desc.do_blend {
       target.blend = Some(wgpu::BlendState::ALPHA_BLENDING);
@@ -935,7 +941,7 @@ impl RenderData {
       bind_group_layouts:   &binding_group_layouts_by_ref,
       push_constant_ranges: &[],
     });
-    self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    let pipeline = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
       label:         None,
       layout:        Some(&pipeline_layout),
       vertex:        wgpu::VertexState {
@@ -974,7 +980,12 @@ impl RenderData {
         alpha_to_coverage_enabled: false,
       },
       multiview:     None,
-    })
+    });
+    PipelinePlusLayouts {
+      pipeline,
+      pipeline_layout,
+      bind_group_layouts,
+    }
   }
 
   pub fn load_texture(&self, bytes: &[u8], filter: bool) -> ImageTexture {
