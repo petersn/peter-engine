@@ -138,7 +138,7 @@ impl<GameState: PeterEngineApp> eframe::App for EframeApp<GameState> {
       egui_ctx,
       |ui| {
         let (id, allocated_rect) = ui.allocate_space(ui.available_size());
-        let response = ui.interact(allocated_rect, id, egui::Sense::click_and_drag());
+        let response = ui.interact(allocated_rect, id, egui::Sense::hover());
         self
           .locked_state
           .lock()
