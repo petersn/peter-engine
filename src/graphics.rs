@@ -679,6 +679,7 @@ pub enum BindingDesc {
 }
 
 pub struct PipelineDesc {
+  pub name:            &'static str,
   pub layout:          Vec<Vec<BindingDesc>>,
   pub vertex_buffers:  Vec<wgpu::VertexBufferLayout<'static>>,
   pub vertex_shader:   &'static str,
@@ -687,11 +688,13 @@ pub struct PipelineDesc {
   pub do_blend:        bool,
   pub depth_compare:   bool,
   pub depth_write:     bool,
+  pub target_format:   Option<wgpu::TextureFormat>,
 }
 
 impl Default for PipelineDesc {
   fn default() -> Self {
     Self {
+      name:            "unnamed-pipeline",
       layout:          Vec::new(),
       vertex_buffers:  Vec::new(),
       vertex_shader:   "vertex shader not specified!",
@@ -700,6 +703,7 @@ impl Default for PipelineDesc {
       do_blend:        false,
       depth_compare:   true,
       depth_write:     true,
+      target_format:   None,
     }
   }
 }
@@ -739,9 +743,9 @@ pub struct RenderData {
   pub device:                     Arc<wgpu::Device>,
   pub queue:                      Arc<wgpu::Queue>,
   pub shader:                     wgpu::ShaderModule,
-  pub linear_texture_sampler:     wgpu::Sampler,
-  pub nearest_texture_sampler:    wgpu::Sampler,
-  pub textured_bind_group_layout: wgpu::BindGroupLayout,
+  pub linear_texture_sampler:     Arc<wgpu::Sampler>,
+  pub nearest_texture_sampler:    Arc<wgpu::Sampler>,
+  pub textured_bind_group_layout: Arc<wgpu::BindGroupLayout>,
   // pub main_data:               GpuDataTextureBuffer,
   // pub main_data_texture:       wgpu::Texture,
   // pub main_data_texture_view:  wgpu::TextureView,
@@ -784,7 +788,7 @@ impl RenderData {
     let queue = Arc::clone(&wgpu_render_state.queue);
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-      label:  None,
+      label:  Some("main_shader"),
       source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(shader_source)),
     });
 
@@ -844,9 +848,9 @@ impl RenderData {
       device,
       queue,
       shader,
-      linear_texture_sampler,
-      nearest_texture_sampler,
-      textured_bind_group_layout,
+      linear_texture_sampler: Arc::new(linear_texture_sampler),
+      nearest_texture_sampler: Arc::new(nearest_texture_sampler),
+      textured_bind_group_layout: Arc::new(textured_bind_group_layout),
       // main_data: GpuDataTextureBuffer::new(),
       // main_data_texture,
       // main_data_texture_view,
@@ -861,12 +865,12 @@ impl RenderData {
   }
 
   pub fn create_pipeline(&self, desc: PipelineDesc) -> PipelinePlusLayouts {
-    let mut target: wgpu::ColorTargetState = self.target_format.into();
+    let mut target: wgpu::ColorTargetState = desc.target_format.unwrap_or(self.target_format).into();
     if desc.do_blend {
       target.blend = Some(wgpu::BlendState::ALPHA_BLENDING);
     }
     let mut bind_group_layouts = Vec::new();
-    for bind_group_desc in desc.layout {
+    for (bind_group_index, bind_group_desc) in desc.layout.iter().enumerate() {
       let mut bindings = Vec::new();
       for (binding_index, binding_desc) in bind_group_desc.iter().enumerate() {
         bindings.push(match binding_desc {
@@ -929,7 +933,7 @@ impl RenderData {
       }
       bind_group_layouts.push(self.device.create_bind_group_layout(
         &wgpu::BindGroupLayoutDescriptor {
-          label:   None,
+          label:   Some(&format!("{}-bind-group-layout #{}/{}", desc.name, bind_group_index + 1, bind_group_desc.len())),
           entries: &bindings,
         },
       ));
@@ -937,12 +941,12 @@ impl RenderData {
     let binding_group_layouts_by_ref =
       bind_group_layouts.iter().map(|bgl| bgl as &wgpu::BindGroupLayout).collect::<Vec<_>>();
     let pipeline_layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-      label:                None,
+      label:                Some(&format!("{}-pipeline-layout", desc.name)),
       bind_group_layouts:   &binding_group_layouts_by_ref,
       push_constant_ranges: &[],
     });
     let pipeline = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-      label:         None,
+      label:         Some(&format!("{}-pipeline", desc.name)),
       layout:        Some(&pipeline_layout),
       vertex:        wgpu::VertexState {
         module:      &self.shader,
@@ -1054,7 +1058,7 @@ impl RenderData {
           }),
         },
       ],
-      label:   None,
+      label:   Some("texture_bind_group"),
     });
     let mut raw_rgba = vec![0u32; dimensions.0 as usize * dimensions.1 as usize];
     for (i, pixel) in diffuse_rgba.pixels().enumerate() {
