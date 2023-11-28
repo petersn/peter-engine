@@ -685,7 +685,7 @@ pub struct PipelineDesc {
   pub vertex_shader:   &'static str,
   pub fragment_shader: &'static str,
   pub topology:        wgpu::PrimitiveTopology,
-  pub do_blend:        bool,
+  pub blend_state:     Option<wgpu::BlendState>,
   pub depth_compare:   bool,
   pub depth_write:     bool,
   pub target_format:   Option<wgpu::TextureFormat>,
@@ -700,7 +700,7 @@ impl Default for PipelineDesc {
       vertex_shader:   "vertex shader not specified!",
       fragment_shader: "fragment shader not specified!",
       topology:        wgpu::PrimitiveTopology::TriangleList,
-      do_blend:        false,
+      blend_state:     None,
       depth_compare:   true,
       depth_write:     true,
       target_format:   None,
@@ -866,8 +866,8 @@ impl RenderData {
 
   pub fn create_pipeline(&self, desc: PipelineDesc) -> PipelinePlusLayouts {
     let mut target: wgpu::ColorTargetState = desc.target_format.unwrap_or(self.target_format).into();
-    if desc.do_blend {
-      target.blend = Some(wgpu::BlendState::ALPHA_BLENDING);
+    if let Some(blend_state) = desc.blend_state {
+      target.blend = Some(blend_state);
     }
     let mut bind_group_layouts = Vec::new();
     for (bind_group_index, bind_group_desc) in desc.layout.iter().enumerate() {
