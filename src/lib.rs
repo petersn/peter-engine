@@ -44,6 +44,7 @@ pub trait PeterEngineApp: Send + 'static {
   fn central_panel_input(
     &mut self,
     _egui_ctx: &egui::Context,
+    _ui: &mut egui::Ui,
     _response: egui::Response,
     _allocated_rect: &egui::Rect,
   ) {
@@ -143,7 +144,7 @@ impl<GameState: PeterEngineApp> eframe::App for EframeApp<GameState> {
           .locked_state
           .lock()
           .unwrap()
-          .central_panel_input(&egui_ctx, response, &allocated_rect);
+          .central_panel_input(&egui_ctx, ui, response, &allocated_rect);
 
         let painter = ui.painter();
         // FIXME: Can I somehow get a ScreenDescriptor?
