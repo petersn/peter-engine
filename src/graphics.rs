@@ -254,6 +254,30 @@ pub struct ImageTexture {
   pub bind_group:   wgpu::BindGroup,
 }
 
+impl ImageTexture {
+  pub fn update_texture(&self, queue: &wgpu::Queue) {
+    queue.write_texture(
+      wgpu::ImageCopyTexture {
+        texture:   &self.texture,
+        mip_level: 0,
+        origin:    wgpu::Origin3d::ZERO,
+        aspect:    wgpu::TextureAspect::All,
+      },
+      unsafe { slice_as_u8_slice(&self.raw_rgba) },
+      wgpu::ImageDataLayout {
+        offset:         0,
+        bytes_per_row:  Some(4 * self.size.0),
+        rows_per_image: Some(self.size.1),
+      },
+      wgpu::Extent3d {
+        width:                 self.size.0,
+        height:                self.size.1,
+        depth_or_array_layers: 1,
+      },
+    );
+  }
+}
+
 pub struct DataTexture {
   pub texture:      wgpu::Texture,
   pub texture_view: wgpu::TextureView,
@@ -737,6 +761,11 @@ pub struct PipelinePlusLayouts {
 //   }};
 // }
 
+pub enum ImageInput {
+  Bytes(&'static [u8]),
+  Blank(u32, u32),
+}
+
 pub struct RenderData {
   pub target_format:              wgpu::TextureFormat,
   pub main_uniforms:              UniformsBuffer<CameraUniforms>,
@@ -992,11 +1021,16 @@ impl RenderData {
     }
   }
 
-  pub fn load_texture(&self, bytes: &[u8], filter: bool) -> ImageTexture {
+  pub fn load_texture(&self, image_input: ImageInput, filter: bool) -> ImageTexture {
     let mip_level_count = if filter { MIP_LEVEL_COUNT } else { 1 };
-    let diffuse_image = image::load_from_memory(bytes).unwrap();
-    let diffuse_rgba = diffuse_image.to_rgba8();
-    let dimensions = diffuse_rgba.dimensions();
+    let (dimensions, diffuse_rgba) = match image_input {
+      ImageInput::Bytes(bytes) => {
+        let diffuse_image = image::load_from_memory(bytes).unwrap();
+        let diffuse_rgba = diffuse_image.to_rgba8();
+        (diffuse_rgba.dimensions(), Some(diffuse_rgba))
+      }
+      ImageInput::Blank(width, height) => ((width, height), None),
+    };
     let texture_size = wgpu::Extent3d {
       width:                 dimensions.0,
       height:                dimensions.1,
@@ -1014,21 +1048,27 @@ impl RenderData {
       label: Some("font_texture"),
       view_formats: &[],
     });
-    self.queue.write_texture(
-      wgpu::ImageCopyTexture {
-        texture:   &diffuse_texture,
-        mip_level: 0,
-        origin:    wgpu::Origin3d::ZERO,
-        aspect:    wgpu::TextureAspect::All,
-      },
-      &diffuse_rgba,
-      wgpu::ImageDataLayout {
-        offset:         0,
-        bytes_per_row:  Some(4 * dimensions.0),
-        rows_per_image: Some(dimensions.1),
-      },
-      texture_size,
-    );
+    let mut raw_rgba = vec![0u32; dimensions.0 as usize * dimensions.1 as usize];
+    if let Some(diffuse_rgba) = diffuse_rgba {
+      for (i, pixel) in diffuse_rgba.pixels().enumerate() {
+        raw_rgba[i] = u32::from_le_bytes([pixel[0], pixel[1], pixel[2], pixel[3]]);
+      }
+      self.queue.write_texture(
+        wgpu::ImageCopyTexture {
+          texture:   &diffuse_texture,
+          mip_level: 0,
+          origin:    wgpu::Origin3d::ZERO,
+          aspect:    wgpu::TextureAspect::All,
+        },
+        &diffuse_rgba,
+        wgpu::ImageDataLayout {
+          offset:         0,
+          bytes_per_row:  Some(4 * dimensions.0),
+          rows_per_image: Some(dimensions.1),
+        },
+        texture_size,
+      );
+    }
     if mip_level_count > 1 {
       let mut mipmap_encoder =
         self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -1060,10 +1100,6 @@ impl RenderData {
       ],
       label:   Some("texture_bind_group"),
     });
-    let mut raw_rgba = vec![0u32; dimensions.0 as usize * dimensions.1 as usize];
-    for (i, pixel) in diffuse_rgba.pixels().enumerate() {
-      raw_rgba[i] = u32::from_le_bytes([pixel[0], pixel[1], pixel[2], pixel[3]]);
-    }
     ImageTexture {
       size: dimensions,
       raw_rgba,
