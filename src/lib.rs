@@ -175,6 +175,7 @@ pub fn launch<GameState: PeterEngineApp>(
   let mut native_options = eframe::NativeOptions::default();
   native_options.depth_buffer = 32;
   native_options.multisampling = crate::graphics::MSAA_COUNT as u16;
+  native_options.wgpu_options.power_preference = wgpu::PowerPreference::HighPerformance;
   eframe::run_native(
     GameState::WINDOW_TITLE,
     native_options,
