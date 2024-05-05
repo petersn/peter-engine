@@ -699,6 +699,7 @@ pub enum BindingDesc {
   Texture { filterable: bool },
   Sampler { filterable: bool },
   DataTexture,
+  ComputeBuffer,
   Custom(wgpu::BindGroupLayoutEntry),
 }
 
@@ -947,6 +948,16 @@ impl RenderData {
               multisampled:   false,
               view_dimension: wgpu::TextureViewDimension::D2,
               sample_type:    wgpu::TextureSampleType::Uint,
+            },
+            count:      None,
+          },
+          BindingDesc::ComputeBuffer => wgpu::BindGroupLayoutEntry {
+            binding:    binding_index as u32,
+            visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            ty:         wgpu::BindingType::Buffer {
+              ty:                 wgpu::BufferBindingType::Storage { read_only: false },
+              has_dynamic_offset: false,
+              min_binding_size:   None,
             },
             count:      None,
           },
