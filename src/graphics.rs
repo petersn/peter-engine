@@ -955,7 +955,7 @@ impl RenderData {
             binding:    binding_index as u32,
             visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
             ty:         wgpu::BindingType::Buffer {
-              ty:                 wgpu::BufferBindingType::Storage { read_only: false },
+              ty:                 wgpu::BufferBindingType::Storage { read_only: true },
               has_dynamic_offset: false,
               min_binding_size:   None,
             },
