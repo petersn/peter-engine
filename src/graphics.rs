@@ -2,10 +2,9 @@ use std::sync::Arc;
 
 use nalgebra::{Matrix4, Point3, UnitQuaternion, Vector3};
 use wgpu::util::DeviceExt;
-use wgpu::{BindGroupLayoutEntry, BufferSlice};
+use wgpu::BufferSlice;
 
 use crate::mipmapping::MipMapGen;
-use crate::PeterEngineApp;
 
 pub const DATA_TEXTURE_SIZE: usize = 2048;
 pub const MSAA_COUNT: u32 = 1;
