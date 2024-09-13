@@ -6,7 +6,7 @@ use wgpu::BufferSlice;
 
 use crate::mipmapping::MipMapGen;
 
-pub const DATA_TEXTURE_SIZE: usize = 2048;
+pub const DATA_TEXTURE_SIZE: usize = 4096; //2048;
 pub const MSAA_COUNT: u32 = 1;
 pub const MIP_LEVEL_COUNT: u32 = 4;
 
@@ -657,6 +657,12 @@ impl GpuDataTextureBuffer {
 
   pub fn reset(&mut self) {
     self.ptr = 0;
+  }
+
+  pub fn extend_from_slice(&mut self, values: &[u32]) {
+    let mut_slice = &mut self.data[self.ptr..self.ptr + values.len()];
+    mut_slice.copy_from_slice(values);
+    self.ptr += values.len();
   }
 
   /// Returns (rows of image data, slice of bytes).
