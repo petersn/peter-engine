@@ -6,7 +6,7 @@ description = "A game engine I (Peter Schmidt-Nielsen) am writing for myself -- 
 license = "CC0-1.0"
 
 [dependencies]
-nalgebra = "0.32.3"
+nalgebra = "0.33.0"
 image = "0.24.7"
 eframe = { version = "0.23.0", default-features = false, features = [
     "persistence",
